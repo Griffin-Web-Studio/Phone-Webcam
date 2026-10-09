@@ -8,8 +8,15 @@
       "name": "Python Debugger",
       "type": "debugpy",
       "request": "launch",
+      "args": [],
+      "program": "${workspaceFolder}/run.py"
+    },
+    {
+      "name": "Python Debugger: check",
+      "type": "debugpy",
+      "request": "launch",
       "args": [
-        ""
+        "--check"
       ],
       "program": "${workspaceFolder}/run.py"
     }
