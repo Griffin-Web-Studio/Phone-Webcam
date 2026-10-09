@@ -11,6 +11,11 @@
   // Use 'forwardPorts' to make a list of ports inside the container available locally.
   // "forwardPorts": [],
   //
+  // Runs on the host before the container starts. The GPU is passed through
+  // with a CDI device, which needs nvidia-container-toolkit on the host. This
+  // fails early with a clear message instead of an opaque Podman error.
+  "initializeCommand": "[ -e /etc/cdi/nvidia.yaml ] || [ -e /var/run/cdi/nvidia.yaml ] || { echo 'No NVIDIA CDI spec found on the host. Install nvidia-container-toolkit, then run: sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml' >&2; exit 1; }",
+  //
   // Use 'postCreateCommand' to run commands after the container is created.
   "postCreateCommand": ".devcontainer/post_create.sh",
   //
@@ -64,9 +69,22 @@
           "editor.defaultFormatter": "esbenp.prettier-vscode"
         },
         // temp
-        "python.useEnvironmentsExtension": true
+        "python.useEnvironmentsExtension": true,
+        "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python"
       }
     }
+  },
+  // The virtual environment lives inside the container, outside the bind
+  // mounted workspace, so a host checkout can never clash with it.
+  "containerEnv": {
+    "UV_PROJECT_ENVIRONMENT": "/home/vscode/.venv",
+    "UV_LINK_MODE": "copy",
+    // The GPU is passed through, but VS Code's Wayland proxy cannot share GPU
+    // buffers with NVIDIA's EGL (EGL_BAD_ALLOC on every frame). Mesa software
+    // rendering over shared memory works, so pin it for Qt WebEngine.
+    "__EGL_VENDOR_LIBRARY_FILENAMES": "/usr/share/glvnd/egl_vendor.d/50_mesa.json",
+    "__GLX_VENDOR_LIBRARY_NAME": "mesa",
+    "LIBGL_ALWAYS_SOFTWARE": "1"
   },
   "remoteEnv": {
     "CLAUDE_CONFIG_DIR": "${containerWorkspaceFolder}/.claude-sessions"
@@ -74,7 +92,13 @@
   // Permit providing extra envvars to devcontainer
   "runArgs": [
     "--env-file",
-    ".devcontainer/.env"
+    ".devcontainer/.env",
+    // NVIDIA GPU through CDI. label=disable lets SELinux (Fedora hosts)
+    // allow access to the device nodes.
+    "--device",
+    "nvidia.com/gpu=all",
+    "--security-opt",
+    "label=disable"
   ]
   //
   // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
