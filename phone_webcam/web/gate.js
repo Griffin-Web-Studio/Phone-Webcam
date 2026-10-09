@@ -4,21 +4,6 @@
 /** @typedef {import("./types").CheckItem} CheckItem */
 /** @typedef {import("./types").Report} Report */
 
-/**
- * Look up an element and check its type, so later code needs no casts.
- * @template {HTMLElement} T
- * @param {string} id
- * @param {new () => T} type
- * @returns {T}
- */
-function byId(id, type) {
-  const el = document.getElementById(id);
-  if (!(el instanceof type)) {
-    throw new Error(`Missing element #${id}`);
-  }
-  return el;
-}
-
 const title = byId("title", HTMLElement);
 const summary = byId("summary", HTMLElement);
 const list = byId("checks", HTMLUListElement);
@@ -58,7 +43,15 @@ function renderItem(item) {
 }
 
 /**
- * Show a report, and offer to continue once nothing blocks.
+ * Leave the gate for the main page.
+ */
+function proceedToApp() {
+  window.location.href = "app.html";
+}
+
+/**
+ * Show a report. When every check passes, go straight to the app, otherwise
+ * offer to continue once nothing blocks.
  * @param {Report} report
  */
 function render(report) {
@@ -78,6 +71,8 @@ function render(report) {
   summary.textContent = report.ready
     ? "Everything required is in place."
     : "Some required items are missing.";
+
+  if (report.checks.every((c) => c.ok)) proceedToApp();
 }
 
 async function refresh() {
@@ -109,7 +104,5 @@ copy.addEventListener("click", async () => {
 });
 
 recheck.addEventListener("click", refresh);
-proceed.addEventListener("click", () => {
-  window.location.href = "app.html";
-});
+proceed.addEventListener("click", proceedToApp);
 window.addEventListener("pywebviewready", refresh);

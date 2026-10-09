@@ -16,12 +16,20 @@ export interface Report {
   command: string | null;
 }
 
-export interface GateApi {
+export type WebcamEvent =
+  | { type: "state"; state: string }
+  | { type: "log"; line: string };
+
+export interface Api {
   get_report(): Promise<Report>;
+  get_state(): Promise<string>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
 }
 
 declare global {
   interface Window {
-    pywebview: { api: GateApi };
+    pywebview: { api: Api };
+    onWebcamEvent?: (event: WebcamEvent) => void;
   }
 }

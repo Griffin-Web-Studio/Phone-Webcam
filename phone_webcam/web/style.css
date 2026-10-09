@@ -135,3 +135,29 @@ button.primary {
 button:hover {
   border-color: var(--muted);
 }
+
+.status {
+  margin: 8px 0 16px;
+  font-weight: 700;
+}
+
+.status[data-state="running"] {
+  color: var(--ok);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+pre#log {
+  height: 320px;
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 12px/1.4 ui-monospace, monospace;
+  white-space: pre-wrap;
+}
