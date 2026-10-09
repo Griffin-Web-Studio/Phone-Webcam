@@ -180,3 +180,34 @@ def test_gate_api_passes_simulation_through(monkeypatch):
     report = Api(["scrcpy"]).get_report()
     assert report["ready"] is False
     assert report["command"] is None or "scrcpy" in report["command"]
+
+
+# @@Orientation@@
+def test_api_saves_the_orientation(monkeypatch):
+    from phone_webcam import config
+    from phone_webcam.api import Api
+
+    api = Api()
+    api.set_orientation(270, True)
+    assert api.get_orientation() == {"rotation": 270, "mirror": True}
+    assert config.load_prefs() == {"rotation": 270, "mirror": True}
+    assert Api().get_orientation() == {"rotation": 270, "mirror": True}
+
+
+def test_api_delivers_events_to_the_page_in_order():
+    import json
+    import time
+
+    from phone_webcam.api import Api
+
+    seen = []
+    api = Api()
+    api.attach(types.SimpleNamespace(evaluate_js=seen.append))
+    for n in range(50):
+        api._push({"type": "log", "line": str(n)})
+    for _ in range(100):
+        if len(seen) == 50:
+            break
+        time.sleep(0.01)
+    lines = [json.loads(js.split("(", 1)[1].rstrip(")"))["line"] for js in seen]
+    assert lines == [str(n) for n in range(50)]

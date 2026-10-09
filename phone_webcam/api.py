@@ -1,11 +1,13 @@
 """Bridge exposed to the page through pywebview's js_api."""
 
 import json
+import queue
+import threading
 from collections.abc import Iterable
 from dataclasses import asdict
 from typing import Any
 
-from phone_webcam import config, deps, webcam
+from phone_webcam import config, deps, pipeline, webcam
 
 
 class Api:
@@ -14,7 +16,16 @@ class Api:
     def __init__(self, simulate: Iterable[str] = ()) -> None:
         self._simulate = tuple(simulate)
         self._window: Any = None
-        self._webcam = webcam.Webcam(self._push)
+        # Events leave through one thread, so they reach the page in order.
+        self._events: queue.Queue[dict | None] = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True).start()
+        prefs = config.load_prefs()
+        rotation = prefs.get("rotation", 0)
+        self._webcam = webcam.Webcam(
+            self._push,
+            rotation if rotation in pipeline.ROTATIONS else 0,
+            bool(prefs.get("mirror", False)),
+        )
 
     def attach(self, window: Any) -> None:
         """Give the bridge the window it pushes events to."""
@@ -43,21 +54,45 @@ class Api:
     def stop(self) -> None:
         self._webcam.stop()
 
+    def get_orientation(self) -> dict:
+        """The current rotation and mirror, for a page that has just loaded."""
+        return self._webcam.orientation()
+
+    def set_orientation(self, rotation: int, mirror: bool) -> None:
+        """Turn the image, live, and remember the choice."""
+        self._webcam.set_orientation(rotation, mirror)
+        config.save_prefs({"rotation": rotation, "mirror": mirror})
+
+    def answer(self, yes: bool) -> None:
+        """Reply to a confirmation the page was asked to show."""
+        self._webcam.answer(yes)
+
+    def toggle_preview(self) -> None:
+        """Open or close the preview window."""
+        self._webcam.toggle_preview()
+
     def shutdown(self) -> None:
         """Stop the webcam when the window closes."""
-        self._window = None
         self._webcam.stop()
+        self._webcam.join()
+        self._events.put(None)
+        self._window = None
 
     # ───────────────────────────────────────────────────────────| Events |──
     def _push(self, event: dict) -> None:
-        """Send an event to the page, if it is listening."""
-        window = self._window
-        if window is None:
-            return
-        payload = json.dumps(event)
-        try:
-            window.evaluate_js(
-                f"window.onWebcamEvent && window.onWebcamEvent({payload})"
-            )
-        except Exception:  # noqa: BLE001 - the window may be mid-close
-            pass
+        """Queue an event for the page, never blocking the caller."""
+        self._events.put(event)
+
+    def _pump(self) -> None:
+        """Deliver queued events to the page, in the order they were made."""
+        while (event := self._events.get()) is not None:
+            window = self._window
+            if window is None:
+                continue
+            payload = json.dumps(event)
+            try:
+                window.evaluate_js(
+                    f"window.onWebcamEvent && window.onWebcamEvent({payload})"
+                )
+            except Exception:  # noqa: BLE001 - the window may be mid-close
+                pass
