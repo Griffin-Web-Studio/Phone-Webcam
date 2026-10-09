@@ -2,17 +2,6 @@
 .claude-sessions/
 CLAUDE.md
 
-# compiled static output (regenerated via `pnpm build`)
-static/build/
-
-# App settings
-# settings.ini
-
-# Django
-*.sqlite3
-staticfiles/
-media/
-
 # OS / editor
 .DS_Store
 Thumbs.db
@@ -30,6 +19,9 @@ __pycache__/
 
 # C extensions
 *.so
+
+# Logs
+*.log
 
 # Distribution / packaging
 .Python
@@ -76,23 +68,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
 
 # Sphinx documentation
 docs/_build/
@@ -153,26 +128,6 @@ ipython_config.py
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
-
-# Celery stuff
-celerybeat-schedule*
-celerybeat.pid
-
-# Redis
-*.rdb
-*.aof
-*.pid
-
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
-
-# ActiveMQ
-activemq-data/
-
-# SageMath parsed files
-*.sage.py
 
 # Environments
 .env
@@ -236,11 +191,3 @@ tempCodeRunnerFile.py
 
 # PyPI configuration file
 .pypirc
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml

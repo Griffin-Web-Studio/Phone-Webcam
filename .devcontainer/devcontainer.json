@@ -26,8 +26,6 @@
         "rodolphebarbanneau.python-docstring-highlighter",
         "ms-python.black-formatter",
         "esbenp.prettier-vscode",
-        "bradlc.vscode-tailwindcss",
-        "alfredbirk.tailwind-documentation",
         "njpwerner.autodocstring",
         "ms-python.mypy-type-checker",
         "EditorConfig.EditorConfig",
@@ -56,13 +54,13 @@
         "[json]": {
           "editor.defaultFormatter": "vscode.json-language-features"
         },
-        "[typescript]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
-        },
-        "[ts]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
-        },
         "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[html]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[css]": {
           "editor.defaultFormatter": "esbenp.prettier-vscode"
         },
         // temp
