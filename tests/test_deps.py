@@ -42,6 +42,22 @@ def test_install_command_merges_and_deduplicates():
     assert cmd == "sudo dnf install v4l-utils scrcpy"
 
 
+def test_packages_for_lists_without_duplicates():
+    keys = ["adb", "v4l2_ctl", "adb"]
+    assert deps.packages_for(keys, "debian") == ["adb", "v4l-utils"]
+
+
+def test_scrcpy_has_no_debian_package_but_has_a_fedora_one():
+    assert deps.packages_for(["scrcpy"], "debian") == []
+    assert deps.install_command(["scrcpy"], "debian") is None
+    assert deps.packages_for(["scrcpy"], "fedora") == ["scrcpy"]
+
+
+@pytest.mark.parametrize("family", [None, "arch"])
+def test_packages_for_unknown_family_is_empty(family):
+    assert deps.packages_for(["scrcpy"], family) == []
+
+
 def test_install_command_uses_family_package_names():
     assert deps.install_command(["adb"], "fedora").endswith("android-tools")
     assert deps.install_command(["adb"], "debian") == "sudo apt install adb"

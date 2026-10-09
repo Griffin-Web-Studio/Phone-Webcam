@@ -48,7 +48,8 @@ INSTALL_PREFIX = {
 
 # Package names per check key and distribution family.
 PACKAGES: dict[str, dict[str, tuple[str, ...]]] = {
-    "scrcpy": {"fedora": ("scrcpy",), "debian": ("scrcpy",)},
+    # Debian has no scrcpy package, it comes from the official release.
+    "scrcpy": {"fedora": ("scrcpy",), "debian": ()},
     "adb": {"fedora": ("android-tools",), "debian": ("adb",)},
     "v4l2_ctl": {"fedora": ("v4l-utils",), "debian": ("v4l-utils",)},
     "pkexec": {"fedora": ("polkit",), "debian": ("pkexec",)},
@@ -196,16 +197,22 @@ def detect_family(os_release: Path = OS_RELEASE) -> str | None:
     return None
 
 
-def install_command(keys: Iterable[str], family: str | None) -> str | None:
-    """Build one install command covering every given check key."""
-    if family not in INSTALL_PREFIX:
-        return None
+def packages_for(keys: Iterable[str], family: str | None) -> list[str]:
+    """List the packages for the given check keys, without duplicates."""
     packages: list[str] = []
+    if family is None:
+        return packages
     for key in keys:
         for package in PACKAGES.get(key, {}).get(family, ()):
             if package not in packages:
                 packages.append(package)
-    if not packages:
+    return packages
+
+
+def install_command(keys: Iterable[str], family: str | None) -> str | None:
+    """Build one install command covering every given check key."""
+    packages = packages_for(keys, family)
+    if family not in INSTALL_PREFIX or not packages:
         return None
     return f"{INSTALL_PREFIX[family]} {' '.join(packages)}"
 
