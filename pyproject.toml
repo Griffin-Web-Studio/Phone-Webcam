@@ -5,7 +5,9 @@ description = "GUI Wrapper for scrcpy"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pywebview[qt]>=6.2.1",
+]
 
 [project.optional-dependencies]
 dev = [
