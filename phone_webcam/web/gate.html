@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Phone Webcam</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="gate.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">Phone Webcam</h1>
+      <p id="summary" class="muted">Checking your system...</p>
+      <ul id="checks"></ul>
+      <section id="fix" hidden>
+        <p id="fix-intro"></p>
+        <div class="command" id="command-row">
+          <code id="command"></code>
+          <button id="copy" type="button">Copy</button>
+        </div>
+      </section>
+      <div class="actions">
+        <button id="recheck" type="button">Re-check</button>
+        <button id="continue" type="button" class="primary" hidden>
+          Continue
+        </button>
+      </div>
+    </main>
+  </body>
+</html>
