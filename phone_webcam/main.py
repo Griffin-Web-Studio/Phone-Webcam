@@ -45,7 +45,7 @@ def fail(results: list[deps.CheckResult], heading: str) -> None:
 
 # ──────────────────────────────────────────────────────────────────| Window |──
 def run_window(simulate: tuple[str, ...] = ()) -> int:
-    """Open the gate window. Only reached once preflight has passed."""
+    """Open the window, gates first. Only reached once preflight has passed."""
     platform = deps.pick_qt_platform()
     if platform.fell_back and platform.name:
         # The preferred display server cannot load, use the working one.
@@ -53,15 +53,18 @@ def run_window(simulate: tuple[str, ...] = ()) -> int:
 
     import webview  # deferred, pywebview is imported after preflight
 
-    from phone_webcam.api import GateApi
+    from phone_webcam.api import Api
 
-    webview.create_window(
+    api = Api(simulate)
+    window = webview.create_window(
         config.app_name(),
         url=str(WEB_DIR / "gate.html"),
-        js_api=GateApi(simulate),
+        js_api=api,
         width=520,
         height=620,
     )
+    api.attach(window)
+    window.events.closed += api.shutdown
     try:
         webview.start(gui="qt")
     except webview.errors.WebViewException as exc:
