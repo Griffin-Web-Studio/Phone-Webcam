@@ -16,7 +16,23 @@
         <button id="start" type="button" class="primary">Start</button>
         <button id="stop" type="button" disabled>Stop</button>
       </div>
+      <section class="controls" aria-label="Camera">
+        <span class="muted">Orientation</span>
+        <button id="rotate-left" type="button" title="Rotate left">⟲</button>
+        <button id="rotate-right" type="button" title="Rotate right">⟳</button>
+        <button id="mirror" type="button" aria-pressed="false">Mirror</button>
+        <button id="reset" type="button">Reset</button>
+        <output id="turn" class="muted">0°</output>
+        <button id="preview" type="button" class="push">Preview</button>
+      </section>
       <pre id="log" aria-live="polite"></pre>
     </main>
+    <dialog id="confirm">
+      <p id="confirm-message"></p>
+      <div class="actions">
+        <button id="confirm-yes" type="button" class="primary">Yes</button>
+        <button id="confirm-no" type="button">No</button>
+      </div>
+    </dialog>
   </body>
 </html>

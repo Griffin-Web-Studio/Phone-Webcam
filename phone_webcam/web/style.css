@@ -161,3 +161,31 @@ pre#log {
   font: 12px/1.4 ui-monospace, monospace;
   white-space: pre-wrap;
 }
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.controls .push {
+  margin-left: auto;
+}
+
+button[aria-pressed="true"] {
+  border-color: var(--ok);
+}
+
+dialog {
+  max-width: 360px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}

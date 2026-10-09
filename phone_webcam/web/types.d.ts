@@ -16,15 +16,27 @@ export interface Report {
   command: string | null;
 }
 
+export interface Orientation {
+  rotation: number;
+  mirror: boolean;
+}
+
 export type WebcamEvent =
   | { type: "state"; state: string }
-  | { type: "log"; line: string };
+  | { type: "log"; line: string }
+  | ({ type: "orientation" } & Orientation)
+  | { type: "preview"; open: boolean }
+  | { type: "confirm"; message: string };
 
 export interface Api {
   get_report(): Promise<Report>;
   get_state(): Promise<string>;
   start(): Promise<void>;
   stop(): Promise<void>;
+  get_orientation(): Promise<Orientation>;
+  set_orientation(rotation: number, mirror: boolean): Promise<void>;
+  answer(yes: boolean): Promise<void>;
+  toggle_preview(): Promise<void>;
 }
 
 declare global {
