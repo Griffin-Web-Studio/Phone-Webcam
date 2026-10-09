@@ -52,6 +52,12 @@ PACKAGES: dict[str, dict[str, tuple[str, ...]]] = {
     "scrcpy": {"fedora": ("scrcpy",), "debian": ()},
     "adb": {"fedora": ("android-tools",), "debian": ("adb",)},
     "v4l2_ctl": {"fedora": ("v4l-utils",), "debian": ("v4l-utils",)},
+    "ffmpeg": {"fedora": ("ffmpeg-free",), "debian": ("ffmpeg",)},
+    "ffplay": {"fedora": ("ffmpeg-free",), "debian": ("ffmpeg",)},
+    "v4l2loopback_ctl": {
+        "fedora": ("v4l2loopback",),
+        "debian": ("v4l2loopback-utils",),
+    },
     "pkexec": {"fedora": ("polkit",), "debian": ("pkexec",)},
     "modprobe": {"fedora": ("kmod",), "debian": ("kmod",)},
     "v4l2loopback": {
@@ -399,7 +405,10 @@ def check_v4l2loopback() -> CheckResult:
 SYSTEM_KEYS = (
     "scrcpy",
     "adb",
+    "ffmpeg",
+    "ffplay",
     "v4l2_ctl",
+    "v4l2loopback_ctl",
     "pkexec",
     "modprobe",
     "v4l2loopback",
@@ -427,11 +436,28 @@ def run_system_checks(simulate: Iterable[str] = ()) -> list[CheckResult]:
         check_binary("scrcpy", "scrcpy", "scrcpy"),
         check_binary("adb", "adb", "adb"),
         check_binary(
+            "ffmpeg", "ffmpeg", "ffmpeg", why="needed to turn the image"
+        ),
+        check_binary(
+            "ffplay",
+            "ffplay",
+            "ffplay",
+            required=False,
+            why="optional, needed for the preview",
+        ),
+        check_binary(
             "v4l2_ctl",
             "v4l2-ctl",
             "v4l2-ctl",
             required=False,
             why="optional, helps find the webcam device",
+        ),
+        check_binary(
+            "v4l2loopback_ctl",
+            "v4l2loopback-ctl",
+            "v4l2loopback-ctl",
+            required=False,
+            why="optional, adds a camera without reloading the module",
         ),
         check_binary(
             "pkexec", "pkexec", "pkexec", why="needed to load the module"
