@@ -8,11 +8,20 @@ uv sync --all-extras
 
 source "${UV_PROJECT_ENVIRONMENT:-.venv}/bin/activate"
 
-# System libraries Qt WebEngine needs to open a window. The list lives in
-# phone_webcam/deps.py, so the app's gate and the container stay in sync.
+# System packages: the libraries Qt WebEngine needs to open a window, and the
+# phone and webcam tools. The lists live in phone_webcam/deps.py, so the app's
+# gates and the container stay in sync. adb comes with scrcpy below, and
+# v4l2loopback is left out on purpose, it is a kernel module and the container
+# uses the host's.
+PACKAGES=$(uv run python -c "
+from phone_webcam import deps
+keys = ['qt_libs', 'v4l2_ctl', 'pkexec', 'modprobe']
+print(' '.join(deps.packages_for(keys, 'debian')))
+")
 sudo apt-get update -qq
-sudo apt-get install -y -qq $(uv run python -c \
-  "from phone_webcam import deps; print(' '.join(deps.PACKAGES['qt_libs']['debian']))")
+sudo apt-get install -y -qq $PACKAGES
+
+.devcontainer/install_scrcpy.sh
 
 # run setup script
 
