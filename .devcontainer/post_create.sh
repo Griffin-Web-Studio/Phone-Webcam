@@ -21,6 +21,12 @@ print(' '.join(deps.packages_for(keys, 'debian')))
 sudo apt-get update -qq
 sudo apt-get install -y -qq $PACKAGES
 
+# Tools for building the binary (scripts/build.sh) and the .deb and .rpm
+# packages from it (scripts/build-deb.sh, scripts/build-rpm.sh). They are not
+# needed to run or develop the app.
+sudo apt-get install -y -qq patchelf ccache rpm rpmlint lintian \
+  desktop-file-utils appstream
+
 .devcontainer/install_scrcpy.sh
 
 # run setup script

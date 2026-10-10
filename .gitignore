@@ -191,3 +191,18 @@ tempCodeRunnerFile.py
 
 # PyPI configuration file
 .pypirc
+
+# Nuitka. scripts/build.sh builds into build/ and dist/, which are ignored
+# above, but running Nuitka by hand leaves these in the project root.
+*.build/
+*.dist/
+*.onefile-build/
+nuitka-crash-report.xml
+
+# Packages made by scripts/build-deb.sh and scripts/build-rpm.sh, which put them
+# in dist/. They are large and made from the binary, so they are never kept.
+*.deb
+*.rpm
+
+# ccache, which speeds up the C compiling Nuitka does.
+.ccache/
