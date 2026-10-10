@@ -295,8 +295,8 @@ and the tilde is how both say "comes before 1.0.0".
 
 Scheduled pipelines (set up under CI/CD to Schedules in GitLab, targeting main)
 produce a rolling nightly build, published under the fixed version `nightly`, so
-the download addresses never change. Each one also creates a GitLab Release, see
-[Nightly release](#nightly-release).
+the download addresses never change, see
+[How long a nightly is kept](#how-long-a-nightly-is-kept).
 
 `check:nightly` compares the current commit against the SHA recorded by the last
 successful nightly publish (`nightly-sha.txt` in the same package) and always
@@ -325,51 +325,28 @@ Every nightly binary also gets a different file version, which is what names the
 folder it unpacks into (see [Building locally](#building-locally)). Without that,
 people would keep running the first nightly they ever downloaded.
 
-### Nightly release
+### How long a nightly is kept
 
-A nightly that has changes ends in a GitLab Release, so it can be found on the
-releases page like any other. There is only ever one of them: a rolling release on
-the fixed tag `nightly`, which is replaced on every run. That keeps the page from
-filling up with nightlies, and keeps its links the same. Its notes carry a warning
-that it is an automatic build, the commit and pipeline it came from, and the same
-install steps as a real release.
+Only the latest nightly exists. Every run uploads over the same `nightly` entry,
+so the download addresses never change and nothing builds up under them. The job
+artifacts of a nightly build expire after three days.
 
-A Git tag cannot be moved, so each run deletes last night's release and tag and
-makes both again at the new commit. Three jobs in the `release` stage do it, in
-order:
+There is no GitLab Release for a nightly. A rolling one, replaced every night, has
+to delete the last one first, which a job token is not allowed to do, and the
+project access token that would allow it is a paid GitLab feature.
 
-| Job                     | Does                                                          |
-| ----------------------- | ------------------------------------------------------------- |
-| `release:nightly:clean` | Deletes the old release, then the old tag. Already gone is fine. |
-| `release:nightly`       | Creates the tag at the built commit, and the release on it.   |
-| `record:nightly-sha`    | Records the commit, which the next night's gate compares with. |
+One thing to watch: GitLab may keep each upload of a file as a duplicate until the
+package registry's cleanup policy removes it. A nightly is about 420 MB, the
+binary and both packages, so this adds up quickly. Set the cleanup policy for
+duplicated files (Settings, then Packages and registries) to keep only a few, and
+check that your GitLab version offers it.
 
-The commit is recorded last on purpose. If anything before it fails, nothing is
-recorded, and the next night builds and publishes again, instead of deciding that
-there is nothing to do.
-
-Creating the tag would start a tag pipeline, which would build everything a second
-time, so the workflow in `.gitlab-ci.yml` never runs one for `nightly`. The tag
-does not look like a version, so it never starts the real release jobs either.
-
-One thing to know: GitLab's "latest release" is the most recent by date. A release
-that is replaced every night is always that, so a link that means "the latest
-release" (`/-/releases/permalink/latest`) points at the nightly. The links in this
-project's documentation name a version, and do not use it. If you ever want the
-nightly out of the way, giving its release a date in the future makes GitLab treat
-it as upcoming and leave it out, at the cost of it showing at the top of the page.
 ### Setting it up
 
 - **Runners.** Jobs run in Docker images, so the runners need the Docker executor
   and the `linux` tag. The test and build jobs install packages with `apt`, so
   they need network access.
 - **Schedule.** Create the nightly one under CI/CD to Schedules, targeting main.
-- **The `nightly` tag.** It must not be a protected tag, or it cannot be deleted
-  and made again.
-- **Deleting needs permission.** The job token may not be allowed to delete a
-  release and a tag. If `release:nightly:clean` fails with HTTP 401 or 403, create
-  a project access token with the `api` scope and add it as the `RELEASE_TOKEN`
-  CI/CD variable. The job uses it when it is there.
 - **Maintainer.** The packages carry a "Name <email>" maintainer, and a CI job has
   no git identity. By default it is the person who started the pipeline. Set a
   `MAINTAINER` CI/CD variable to fix it to something else.

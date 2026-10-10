@@ -87,12 +87,19 @@ put `scrcpy` and `adb` on your `PATH`.
 
 ### Nightly builds
 
-Every night that `main` has changed, a build of it is published as a rolling
-**nightly** release on the
-[Releases page](https://gitlab.com/griffin-web-studio/garage/phone-webcam/-/releases/nightly),
-with the same files as a real release. It is an automatic build, not a release, so
-use it to try what is coming and expect rough edges. Its version looks like
-`0.2.0+nightly.57.a1b2c3d`: the release it is built on, the pipeline and the commit.
+Every night that `main` has changed, a build of it is published to the project's
+package registry, with the same files as a release. Each one replaces the last, so
+there is only ever one nightly, the newest, and its addresses never change:
+
+```bash
+curl -fL -o phone-webcam.rpm "https://gitlab.com/api/v4/projects/87418662/packages/generic/phone-webcam/nightly/phone-webcam.rpm"
+curl -fL -o phone-webcam.deb "https://gitlab.com/api/v4/projects/87418662/packages/generic/phone-webcam/nightly/phone-webcam.deb"
+```
+
+It is an automatic build, not a release, so use it to try what is coming and expect
+rough edges. Its version looks like `0.2.0+nightly.57.a1b2c3d`: the release it is
+built on, the pipeline and the commit. The binary and `SHA256SUMS` are beside them,
+under the same address.
 
 ### Just the binary
 
