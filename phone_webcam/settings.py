@@ -51,3 +51,55 @@ class Settings:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+# ───────────────────────────────────────────────────────────────────| Slate |──
+TITLE_LIMIT = 32
+SUBTITLE_LIMIT = 64
+
+
+@dataclass(frozen=True)
+class SlateSettings:
+    """The cover image and when it is shown.
+
+    `svg` is the path of a custom image, empty for the built-in one. `notices`
+    shows a notice while the camera starts or switches, and `mirror` flips the
+    cover along with the picture when the output is mirrored. The cover is
+    never rotated, the rotation only puts the camera right way up.
+    """
+
+    title: str = "Be right back"
+    subtitle: str = "Camera is covered"
+    svg: str = ""
+    notices: bool = True
+    mirror: bool = True
+
+    @classmethod
+    def from_dict(cls, data: object) -> "SlateSettings":
+        """Build settings from saved or submitted data, ignoring bad values."""
+        base = cls()
+        if not isinstance(data, dict):
+            return base
+
+        def text(key: str, limit: int) -> str:
+            value = data.get(key)
+            if not isinstance(value, str):
+                return getattr(base, key)
+            # Line breaks would only confuse a single line of SVG text.
+            return " ".join(value.split())[:limit]
+
+        def flag(key: str) -> bool:
+            value = data.get(key)
+            return value if isinstance(value, bool) else getattr(base, key)
+
+        svg = data.get("svg")
+        return cls(
+            title=text("title", TITLE_LIMIT),
+            subtitle=text("subtitle", SUBTITLE_LIMIT),
+            svg=svg.strip() if isinstance(svg, str) else base.svg,
+            notices=flag("notices"),
+            mirror=flag("mirror"),
+        )
+
+    def as_dict(self) -> dict:
+        return asdict(self)

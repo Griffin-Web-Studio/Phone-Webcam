@@ -1,6 +1,6 @@
 """Tests for the stream settings."""
 
-from phone_webcam.settings import Settings
+from phone_webcam.settings import Settings, SlateSettings
 
 
 def test_defaults_are_1080p_30_at_8_megabits():
@@ -37,3 +37,48 @@ def test_nonsense_input_gives_the_defaults():
 def test_preview_never_runs_faster_than_the_output():
     assert Settings(fps=15, preview_fps=60).preview_rate == 15
     assert Settings(fps=60, preview_fps=30).preview_rate == 30
+
+
+# ───────────────────────────────────────────────────────────────────| Slate |──
+def test_slate_defaults():
+    assert SlateSettings().as_dict() == {
+        "title": "Be right back",
+        "subtitle": "Camera is covered",
+        "svg": "",
+        "notices": True,
+        "mirror": True,
+    }
+
+
+def test_slate_good_values_are_kept():
+    chosen = SlateSettings.from_dict(
+        {
+            "title": "Lunch",
+            "subtitle": "Back at 2",
+            "svg": "/a.svg",
+            "notices": False,
+            "mirror": False,
+        }
+    )
+    assert chosen == SlateSettings("Lunch", "Back at 2", "/a.svg", False, False)
+
+
+def test_slate_text_is_limited_and_kept_to_one_line():
+    chosen = SlateSettings.from_dict(
+        {"title": "x" * 99, "subtitle": "one\ntwo\r\n  three"}
+    )
+    assert len(chosen.title) == 32
+    assert chosen.subtitle == "one two three"
+    assert len(SlateSettings.from_dict({"subtitle": "y" * 200}).subtitle) == 64
+
+
+def test_slate_bad_values_fall_back_one_by_one():
+    chosen = SlateSettings.from_dict(
+        {"title": 5, "subtitle": None, "svg": 3, "notices": "yes", "mirror": 1}
+    )
+    assert chosen == SlateSettings()
+
+
+def test_slate_nonsense_input_gives_the_defaults():
+    assert SlateSettings.from_dict(None) == SlateSettings()
+    assert SlateSettings.from_dict("cover") == SlateSettings()
