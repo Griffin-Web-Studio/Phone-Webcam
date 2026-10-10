@@ -67,3 +67,9 @@ def test_cli_prints_one_name_per_line(capsys):
     assert capsys.readouterr().out.split() == gen.requirements(
         "debian", "recommended"
     )
+
+
+@pytest.mark.parametrize("family", ["debian", "fedora"])
+def test_nothing_required_is_also_recommended(family):
+    required = set(gen.requirements(family, "required"))
+    assert not required & set(gen.requirements(family, "recommended"))

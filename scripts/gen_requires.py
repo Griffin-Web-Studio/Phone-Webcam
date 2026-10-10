@@ -18,7 +18,7 @@ from phone_webcam import deps  # noqa: E402
 
 # What the app cannot run without, and what only makes it nicer to use.
 REQUIRED = ("scrcpy", "adb", "ffmpeg", "pkexec", "modprobe", "qt_libs")
-RECOMMENDED = ("v4l2_ctl", "v4l2loopback_ctl", "v4l2loopback")
+RECOMMENDED = ("ffmpeg_svg", "v4l2_ctl", "v4l2loopback_ctl", "v4l2loopback")
 
 # ffmpeg is asked for by its command. Fedora's own ffmpeg-free and RPM Fusion's
 # ffmpeg replace each other, and asking for either by name would force a swap
@@ -30,13 +30,15 @@ def requirements(family: str, kind: str) -> list[str]:
     """The package names for one family, without duplicates."""
     keys = {"required": REQUIRED, "recommended": RECOMMENDED}[kind]
     names: list[str] = []
+    # Something already required is not recommended on top of it.
+    already = requirements(family, "required") if kind == "recommended" else []
     for key in keys:
         replacement = COMMAND_DEPENDENCIES.get((family, key))
         found = (
             [replacement] if replacement else deps.packages_for([key], family)
         )
         for name in found:
-            if name not in names:
+            if name not in names and name not in already:
                 names.append(name)
     return names
 

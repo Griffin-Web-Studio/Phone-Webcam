@@ -428,3 +428,40 @@ def test_qt_lib_falls_back_to_the_top_folder_of_a_compiled_app(tmp_path):
     root.mkdir(parents=True)
     (tmp_path / "libQt6Gui.so.6").touch()
     assert deps._qt_lib(root, "libQt6Gui.so.6") == tmp_path / "libQt6Gui.so.6"
+
+
+# ──────────────────────────────────────────────────────────────| SVG drawing |──
+def fake_ffmpeg(monkeypatch, decoders, found=True):
+    import subprocess
+
+    monkeypatch.setattr(
+        deps, "_which", lambda name: "/usr/bin/ffmpeg" if found else None
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, decoders, ""),
+    )
+
+
+def test_svg_support_is_found_in_the_decoder_list(monkeypatch):
+    fake_ffmpeg(monkeypatch, " V....D librsvg   Librsvg rasterizer\n")
+    result = deps.check_ffmpeg_svg()
+    assert result.ok and not result.required
+
+
+def test_missing_svg_support_is_optional_and_explained(monkeypatch):
+    fake_ffmpeg(monkeypatch, " V....D h264   H.264\n")
+    result = deps.check_ffmpeg_svg()
+    assert not result.ok and not result.blocking
+    assert "plain colour" in result.detail
+
+
+def test_svg_support_is_not_blamed_when_ffmpeg_itself_is_missing(monkeypatch):
+    fake_ffmpeg(monkeypatch, "", found=False)
+    result = deps.check_ffmpeg_svg()
+    assert result.ok and "ffmpeg is missing" in result.detail
+
+
+def test_the_svg_check_can_be_simulated():
+    assert "ffmpeg_svg" in deps.SYSTEM_KEYS

@@ -53,6 +53,8 @@ PACKAGES: dict[str, dict[str, tuple[str, ...]]] = {
     "adb": {"fedora": ("android-tools",), "debian": ("adb",)},
     "v4l2_ctl": {"fedora": ("v4l-utils",), "debian": ("v4l-utils",)},
     "ffmpeg": {"fedora": ("ffmpeg-free",), "debian": ("ffmpeg",)},
+    # SVG drawing is part of the same ffmpeg package, built with librsvg.
+    "ffmpeg_svg": {"fedora": ("ffmpeg-free",), "debian": ("ffmpeg",)},
     "v4l2loopback_ctl": {
         "fedora": ("v4l2loopback",),
         "debian": ("v4l2loopback-utils",),
@@ -418,10 +420,49 @@ def check_v4l2loopback() -> CheckResult:
     )
 
 
+def ffmpeg_has_decoder(name: str) -> bool | None:
+    """Ask ffmpeg whether it has a decoder, None if it cannot be asked."""
+    ffmpeg = _which("ffmpeg")
+    if ffmpeg is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-decoders"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return None
+    return name in proc.stdout
+
+
+def check_ffmpeg_svg() -> CheckResult:
+    """The cover image is an SVG, which ffmpeg draws with its librsvg decoder."""
+    key, label = "ffmpeg_svg", "ffmpeg SVG support"
+    has = ffmpeg_has_decoder("librsvg")
+    if has is None:
+        return CheckResult(
+            key, label, True, False, detail="not checked, ffmpeg is missing"
+        )
+    if has:
+        return CheckResult(key, label, True, False)
+    return CheckResult(
+        key,
+        label,
+        False,
+        False,
+        detail="optional, without it the cover is a plain colour",
+    )
+
+
 SYSTEM_KEYS = (
     "scrcpy",
     "adb",
     "ffmpeg",
+    "ffmpeg_svg",
     "v4l2_ctl",
     "v4l2loopback_ctl",
     "pkexec",
@@ -453,6 +494,7 @@ def run_system_checks(simulate: Iterable[str] = ()) -> list[CheckResult]:
         check_binary(
             "ffmpeg", "ffmpeg", "ffmpeg", why="needed to turn the image"
         ),
+        check_ffmpeg_svg(),
         check_binary(
             "v4l2_ctl",
             "v4l2-ctl",
