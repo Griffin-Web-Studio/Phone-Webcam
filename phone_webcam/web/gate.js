@@ -45,7 +45,13 @@ function renderItem(item) {
 /**
  * Leave the gate for the main page.
  */
-function proceedToApp() {
+async function proceedToApp() {
+  try {
+    // The main view needs a bigger window than this narrow checklist.
+    await window.pywebview.api.enter_app();
+  } catch {
+    // A window that cannot be resized is still usable, so carry on.
+  }
   window.location.href = "app.html";
 }
 

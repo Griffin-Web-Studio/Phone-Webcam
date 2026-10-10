@@ -59,6 +59,9 @@ export type WebcamEvent =
 
 export interface Api {
   get_report(): Promise<Report>;
+  enter_app(): Promise<void>;
+  get_side_width(): Promise<number>;
+  set_side_width(width: number): Promise<void>;
   get_state(): Promise<string>;
   get_phone(): Promise<PhoneState>;
   copy_text(text: string): Promise<void>;
@@ -72,7 +75,7 @@ export interface Api {
   get_orientation(): Promise<Orientation>;
   set_orientation(rotation: number, mirror: boolean): Promise<void>;
   answer(yes: boolean): Promise<void>;
-  toggle_preview(): Promise<void>;
+  show_preview(wanted: boolean): Promise<void>;
 }
 
 declare global {

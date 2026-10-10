@@ -9,85 +9,134 @@
     <script src="app.js" defer></script>
   </head>
   <body class="app">
-    <main id="app">
-      <h1>Phone Webcam</h1>
-      <p id="status" class="status" data-state="stopped">Stopped</p>
-      <div class="actions">
-        <button id="start" type="button" class="primary">Start</button>
-        <button id="stop" type="button" disabled>Stop</button>
-      </div>
-      <section class="controls" aria-label="Phone camera">
-        <label class="muted" for="camera">Camera</label>
-        <select id="camera">
-          <option value="">Default camera</option>
-        </select>
-        <button id="cameras-refresh" type="button" title="Look for cameras">
-          ↻
-        </button>
-      </section>
-      <details class="settings">
-        <summary>Stream settings</summary>
-        <div class="settings-grid">
-          <label for="set-resolution">Resolution</label>
-          <select id="set-resolution">
-            <option value="1080p">1080p</option>
-            <option value="720p">720p</option>
-          </select>
-          <label for="set-fps">Frame rate</label>
-          <select id="set-fps">
-            <option value="15">15 fps</option>
-            <option value="24">24 fps</option>
-            <option value="30">30 fps</option>
-            <option value="60">60 fps</option>
-          </select>
-          <label for="set-bitrate">Bitrate</label>
-          <select id="set-bitrate">
-            <option value="4">4 Mbit/s</option>
-            <option value="8">8 Mbit/s</option>
-            <option value="12">12 Mbit/s</option>
-            <option value="16">16 Mbit/s</option>
-            <option value="24">24 Mbit/s</option>
-          </select>
-          <label for="set-preview-fps">Preview rate</label>
-          <select id="set-preview-fps">
-            <option value="15">15 fps</option>
-            <option value="30">30 fps</option>
-            <option value="60">60 fps</option>
-          </select>
+    <div id="app" class="layout">
+      <aside class="side" aria-label="Controls">
+        <picture class="brand">
+          <source
+            media="(prefers-color-scheme: dark)"
+            srcset="img/logo-dark.svg"
+          />
+          <img src="img/logo.svg" alt="Griffin Web Studio" />
+        </picture>
+
+        <section class="session" aria-label="Webcam">
+          <p id="status" class="status" data-state="stopped">Stopped</p>
+          <button id="toggle" type="button" class="primary">Start</button>
+        </section>
+
+        <div class="accordion">
+          <details open>
+            <summary>Camera</summary>
+            <div class="fold">
+              <div class="row">
+                <select id="camera" aria-label="Phone camera">
+                  <option value="">Default camera</option>
+                </select>
+                <button
+                  id="cameras-refresh"
+                  type="button"
+                  title="Look for cameras"
+                >
+                  ↻
+                </button>
+              </div>
+            </div>
+          </details>
+
+          <details open>
+            <summary>Orientation</summary>
+            <div class="fold">
+              <div class="row">
+                <button id="rotate-left" type="button" title="Rotate left">
+                  ⟲
+                </button>
+                <button id="rotate-right" type="button" title="Rotate right">
+                  ⟳
+                </button>
+                <button id="mirror" type="button" aria-pressed="false">
+                  Mirror
+                </button>
+                <button id="reset" type="button">Reset</button>
+              </div>
+              <output id="turn" class="muted">0°</output>
+            </div>
+          </details>
+
+          <details>
+            <summary>Stream settings</summary>
+            <div class="fold">
+              <div class="settings-grid">
+                <label for="set-resolution">Resolution</label>
+                <select id="set-resolution">
+                  <option value="1080p">1080p</option>
+                  <option value="720p">720p</option>
+                </select>
+                <label for="set-fps">Frame rate</label>
+                <select id="set-fps">
+                  <option value="15">15 fps</option>
+                  <option value="24">24 fps</option>
+                  <option value="30">30 fps</option>
+                  <option value="60">60 fps</option>
+                </select>
+                <label for="set-bitrate">Bitrate</label>
+                <select id="set-bitrate">
+                  <option value="4">4 Mbit/s</option>
+                  <option value="8">8 Mbit/s</option>
+                  <option value="12">12 Mbit/s</option>
+                  <option value="16">16 Mbit/s</option>
+                  <option value="24">24 Mbit/s</option>
+                </select>
+                <label for="set-preview-fps">Preview rate</label>
+                <select id="set-preview-fps">
+                  <option value="15">15 fps</option>
+                  <option value="30">30 fps</option>
+                  <option value="60">60 fps</option>
+                </select>
+              </div>
+              <p class="muted note">
+                Frame rate and bitrate change live, with a short pause while
+                the phone restarts its camera. The resolution can only change
+                while stopped. Lower values mean less delay. The preview
+                cannot run faster than the frame rate.
+              </p>
+            </div>
+          </details>
         </div>
-        <p class="muted">
-          Frame rate and bitrate change live, with a short pause while the
-          phone restarts its camera. The resolution can only change while
-          stopped. Lower values mean less delay. The preview cannot run faster
-          than the frame rate.
-        </p>
-      </details>
-      <section class="controls" aria-label="Orientation">
-        <span class="muted">Orientation</span>
-        <button id="rotate-left" type="button" title="Rotate left">⟲</button>
-        <button id="rotate-right" type="button" title="Rotate right">⟳</button>
-        <button id="mirror" type="button" aria-pressed="false">Mirror</button>
-        <button id="reset" type="button">Reset</button>
-        <output id="turn" class="muted">0°</output>
-        <button id="preview" type="button" class="push">Preview</button>
-      </section>
-      <figure id="preview-panel" hidden>
-        <img id="preview-img" alt="Live preview" width="480" height="270" />
-      </figure>
-      <pre id="log" aria-live="polite"></pre>
-    </main>
+      </aside>
+
+      <div
+        id="splitter"
+        class="splitter"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the side panel"
+        aria-valuemin="240"
+        aria-valuemax="900"
+        tabindex="0"
+      ></div>
+
+      <main class="stage">
+        <header class="stage-head">
+          <h1>Phone Webcam</h1>
+        </header>
+        <figure id="preview-panel">
+          <img id="preview-img" alt="Live preview" hidden />
+          <figcaption id="preview-empty" class="muted">
+            Start the webcam to see what other apps receive.
+          </figcaption>
+        </figure>
+        <div class="log-head">
+          <h2>Log</h2>
+          <button id="copy-log" type="button">Copy</button>
+        </div>
+        <pre id="log" aria-live="polite" aria-label="Log"></pre>
+      </main>
+    </div>
     <div id="phone" role="alert">
-      <div class="busy-card">
+      <div class="notice-card">
         <span class="spinner" aria-hidden="true"></span>
         <h2 id="phone-title">Looking for your phone...</h2>
         <p id="phone-text" class="muted"></p>
-      </div>
-    </div>
-    <div id="busy" role="status" hidden>
-      <div class="busy-card">
-        <span class="spinner" aria-hidden="true"></span>
-        <p id="busy-text"></p>
-        <button id="busy-dismiss" type="button">Dismiss</button>
       </div>
     </div>
     <dialog id="confirm">

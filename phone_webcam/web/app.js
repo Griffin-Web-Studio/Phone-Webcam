@@ -9,17 +9,18 @@
 /** @typedef {import("./types").StreamSettings} StreamSettings */
 
 const statusEl = byId("status", HTMLElement);
-const startBtn = byId("start", HTMLButtonElement);
-const stopBtn = byId("stop", HTMLButtonElement);
+const toggleBtn = byId("toggle", HTMLButtonElement);
 const logEl = byId("log", HTMLElement);
+const copyLog = byId("copy-log", HTMLButtonElement);
 const rotateLeft = byId("rotate-left", HTMLButtonElement);
 const rotateRight = byId("rotate-right", HTMLButtonElement);
 const mirrorBtn = byId("mirror", HTMLButtonElement);
 const resetBtn = byId("reset", HTMLButtonElement);
 const turnEl = byId("turn", HTMLElement);
-const previewBtn = byId("preview", HTMLButtonElement);
-const previewPanel = byId("preview-panel", HTMLElement);
+const previewEmpty = byId("preview-empty", HTMLElement);
 const previewImg = byId("preview-img", HTMLImageElement);
+const layout = byId("app", HTMLElement);
+const splitter = byId("splitter", HTMLElement);
 const cameraSelect = byId("camera", HTMLSelectElement);
 const camerasRefresh = byId("cameras-refresh", HTMLButtonElement);
 const setResolution = byId("set-resolution", HTMLSelectElement);
@@ -30,9 +31,6 @@ const appMain = byId("app", HTMLElement);
 const phoneOverlay = byId("phone", HTMLElement);
 const phoneTitle = byId("phone-title", HTMLElement);
 const phoneText = byId("phone-text", HTMLElement);
-const busy = byId("busy", HTMLElement);
-const busyText = byId("busy-text", HTMLElement);
-const busyDismiss = byId("busy-dismiss", HTMLButtonElement);
 const confirmDialog = byId("confirm", HTMLDialogElement);
 const confirmMessage = byId("confirm-message", HTMLElement);
 const confirmYes = byId("confirm-yes", HTMLButtonElement);
@@ -51,22 +49,36 @@ const LABELS = {
   applying: "Applying settings...",
 };
 
+let webcamState = "stopped";
+
 /**
  * @param {string} state
  */
 function setState(state) {
+  webcamState = state;
   statusEl.textContent = LABELS[state] ?? state;
   statusEl.dataset.state = state;
-  startBtn.disabled = state !== "stopped";
-  stopBtn.disabled = state === "stopped" || state === "stopping";
+
+  // One button: Start while stopped, Stop otherwise, which also cancels a
+  // start that is under way.
+  const stopped = state === "stopped";
+  toggleBtn.textContent = stopped
+    ? "Start"
+    : state === "stopping"
+      ? "Stopping..."
+      : "Stop";
+  toggleBtn.classList.toggle("primary", stopped);
+  toggleBtn.disabled = state === "stopping";
+
   cameraSelect.disabled = ["switching", "applying", "stopping"].includes(state);
   // The resolution is the output's format, so it only changes while stopped.
   // The frame rate and bitrate restart the phone side and so can change live,
   // but not in the middle of another change.
-  const settled = state === "stopped" || state === "running";
-  setResolution.disabled = state !== "stopped";
+  const settled = stopped || state === "running";
+  setResolution.disabled = !stopped;
   setFps.disabled = !settled;
   setBitrate.disabled = !settled;
+  showPreviewNotice();
 }
 
 /**
@@ -177,29 +189,51 @@ async function loadCameras() {
   }
 }
 
+/** @type {PreviewEvent["state"]} */
+let previewState = "closed";
+
+/** Whether the window is in front, so a preview is worth running. */
+function windowActive() {
+  return document.hasFocus() && !document.hidden;
+}
+
+/** Say what the empty preview frame is waiting for. */
+function showPreviewNotice() {
+  previewEmpty.textContent =
+    previewState === "starting"
+      ? "Starting preview..."
+      : webcamState === "stopped"
+        ? "Start the webcam to see what other apps receive."
+        : windowActive()
+          ? "Waiting for the camera..."
+          : "Preview paused while this window is in the background.";
+}
+
 /**
- * Follow the preview through its states, with a notice while it changes.
+ * Follow the preview through its states.
  * @param {PreviewEvent["state"]} state
  * @param {string | null} url
  */
 function showPreview(state, url) {
-  const changing = state === "starting" || state === "stopping";
-  busy.hidden = !changing;
-  busyText.textContent =
-    state === "starting"
-      ? "Starting preview, please wait..."
-      : "Stopping preview, please wait...";
-  previewBtn.disabled = changing;
-
-  if (state === "open" && url !== null) {
+  previewState = state;
+  const open = state === "open" && url !== null;
+  if (open) {
     previewImg.src = url;
-    previewPanel.hidden = false;
-    previewBtn.textContent = "Close preview";
   } else if (state === "closed") {
     previewImg.removeAttribute("src");
-    previewPanel.hidden = true;
-    previewBtn.textContent = "Preview";
   }
+  previewImg.hidden = !open;
+  previewEmpty.hidden = open;
+  showPreviewNotice();
+}
+
+/**
+ * The preview only runs while this window is in front. It costs encoding work
+ * that nobody sees otherwise, and Python brings it back when we return.
+ */
+function syncPreview() {
+  window.pywebview.api.show_preview(windowActive());
+  showPreviewNotice();
 }
 
 /**
@@ -253,8 +287,11 @@ window.onWebcamEvent = (event) => {
   }
 };
 
-startBtn.addEventListener("click", () => window.pywebview.api.start());
-stopBtn.addEventListener("click", () => window.pywebview.api.stop());
+toggleBtn.addEventListener("click", () =>
+  webcamState === "stopped"
+    ? window.pywebview.api.start()
+    : window.pywebview.api.stop(),
+);
 cameraSelect.addEventListener("change", () =>
   window.pywebview.api.set_camera(cameraSelect.value),
 );
@@ -273,19 +310,81 @@ mirrorBtn.addEventListener("click", () =>
 resetBtn.addEventListener("click", () =>
   window.pywebview.api.set_orientation(0, false),
 );
-previewBtn.addEventListener("click", () =>
-  window.pywebview.api.toggle_preview(),
-);
-// Dismissing is an escape hatch, so it also frees the button in case a state
-// change never arrives.
-function dismissBusy() {
-  busy.hidden = true;
-  previewBtn.disabled = false;
-}
-busyDismiss.addEventListener("click", dismissBusy);
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") dismissBusy();
+copyLog.addEventListener("click", async () => {
+  try {
+    await window.pywebview.api.copy_text(logEl.textContent ?? "");
+    copyLog.textContent = "Copied";
+  } catch {
+    copyLog.textContent = "Copy failed";
+  }
+  setTimeout(() => (copyLog.textContent = "Copy"), 1500);
 });
+window.addEventListener("focus", syncPreview);
+window.addEventListener("blur", syncPreview);
+document.addEventListener("visibilitychange", syncPreview);
+
+// ─────────────────────────────────────────────────────────────| Side panel |──
+const SIDE_MIN = 240;
+const SIDE_STEP = 16;
+
+/**
+ * Set the side panel's width in pixels, kept to sensible limits.
+ * @param {number} width
+ */
+function setSideWidth(width) {
+  const max = Math.min(900, Math.round(window.innerWidth * 0.6));
+  const clamped = Math.max(SIDE_MIN, Math.min(max, Math.round(width)));
+  layout.style.setProperty("--side-width", `${clamped}px`);
+  splitter.setAttribute("aria-valuenow", String(clamped));
+  return clamped;
+}
+
+function resetSideWidth() {
+  layout.style.removeProperty("--side-width");
+  splitter.removeAttribute("aria-valuenow");
+  window.pywebview.api.set_side_width(0);
+}
+
+/**
+ * Remember the width in the user's preferences, so it survives a restart.
+ * @param {number} width
+ */
+function saveSideWidth(width) {
+  window.pywebview.api.set_side_width(width);
+}
+
+splitter.addEventListener("pointerdown", (event) => {
+  splitter.setPointerCapture(event.pointerId);
+  splitter.classList.add("dragging");
+});
+splitter.addEventListener("pointermove", (event) => {
+  if (splitter.hasPointerCapture(event.pointerId)) setSideWidth(event.clientX);
+});
+splitter.addEventListener("pointerup", (event) => {
+  splitter.releasePointerCapture(event.pointerId);
+  splitter.classList.remove("dragging");
+  saveSideWidth(setSideWidth(event.clientX));
+});
+splitter.addEventListener("dblclick", resetSideWidth);
+splitter.addEventListener("keydown", (event) => {
+  const current =
+    document.querySelector(".side")?.getBoundingClientRect().width ?? SIDE_MIN;
+  if (event.key === "ArrowLeft") {
+    saveSideWidth(setSideWidth(current - SIDE_STEP));
+  } else if (event.key === "ArrowRight") {
+    saveSideWidth(setSideWidth(current + SIDE_STEP));
+  } else if (event.key === "Home") {
+    resetSideWidth();
+  } else {
+    return;
+  }
+  event.preventDefault();
+});
+window.addEventListener("resize", () => {
+  const width = layout.style.getPropertyValue("--side-width");
+  if (width) setSideWidth(parseInt(width, 10));
+});
+
 confirmYes.addEventListener("click", () => answer(true));
 confirmNo.addEventListener("click", () => answer(false));
 confirmDialog.addEventListener("cancel", () => answer(false));
@@ -293,5 +392,8 @@ window.addEventListener("pywebviewready", async () => {
   setState(await window.pywebview.api.get_state());
   showOrientation(await window.pywebview.api.get_orientation());
   showSettings(await window.pywebview.api.get_settings());
+  const side = await window.pywebview.api.get_side_width();
+  if (side > 0) setSideWidth(side);
   showPhone(await window.pywebview.api.get_phone());
+  syncPreview();
 });

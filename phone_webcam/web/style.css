@@ -1,9 +1,25 @@
+/* Griffin Web Studio brand: dark blue #1b3464 is the primary colour and light
+   blue #62a5da the secondary. Light blue is too pale for text on white, so on
+   the light theme it only decorates, and on the dark theme it takes over as
+   the colour of actions and links. */
 :root {
+  --brand-dark: #1b3464;
+  --brand-light: #62a5da;
+
   --bg: #ffffff;
-  --fg: #1c1e21;
-  --muted: #6b7280;
-  --border: #d9dce1;
-  --surface: #f4f5f7;
+  --fg: #1a2233;
+  --muted: #5b6578;
+  --border: #d5dbe6;
+  --control: #7d8aa0;
+  --surface: #f3f6fb;
+  --surface-hover: #e8eef7;
+
+  --primary: var(--brand-dark);
+  --primary-hover: #142850;
+  --on-primary: #ffffff;
+  --accent: #2b6fa8;
+  --focus: #2b6fa8;
+
   --ok: #1a7f37;
   --bad: #c62828;
   --optional: #9a6700;
@@ -12,11 +28,20 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16181d;
-    --fg: #e6e8eb;
-    --muted: #9aa1ac;
-    --border: #2f343d;
-    --surface: #20242b;
+    --bg: #0d1424;
+    --fg: #e7edf7;
+    --muted: #9aa8c2;
+    --border: #263553;
+    --control: #5b6b8c;
+    --surface: #141d33;
+    --surface-hover: #1b2a4a;
+
+    --primary: var(--brand-light);
+    --primary-hover: #7ab4e0;
+    --on-primary: #0b1530;
+    --accent: var(--brand-light);
+    --focus: var(--brand-light);
+
     --ok: #4cc26a;
     --bad: #ff6b6b;
     --optional: #e0b341;
@@ -34,19 +59,49 @@ body {
   font: 15px/1.5 system-ui, sans-serif;
 }
 
+/* A thin brand bar, the dark mass and the light ring of the logo. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--brand-dark) 0 70%,
+    var(--brand-light) 70% 100%
+  );
+}
+
 main {
-  max-width: 480px;
+  max-width: 520px;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 28px 16px 24px;
+}
+
+.brand {
+  display: block;
+  margin: 0 0 20px;
+}
+
+.brand img {
+  display: block;
+  width: auto;
+  height: 34px;
 }
 
 h1 {
   margin: 0 0 4px;
   font-size: 22px;
+  letter-spacing: -0.01em;
 }
 
 .muted {
   color: var(--muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 ul {
@@ -107,14 +162,22 @@ code {
   font: 13px ui-monospace, monospace;
 }
 
-button {
-  padding: 8px 14px;
+button,
+select {
   color: var(--fg);
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--control);
   border-radius: 6px;
   font: inherit;
+}
+
+button {
+  padding: 8px 14px;
   cursor: pointer;
+}
+
+select {
+  padding: 7px 10px;
 }
 
 .actions {
@@ -123,17 +186,25 @@ button {
 }
 
 button.primary {
-  color: #ffffff;
-  background: var(--ok);
-  border-color: var(--ok);
+  color: var(--on-primary);
+  background: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 
 [hidden] {
   display: none !important;
 }
 
-button:hover {
-  border-color: var(--muted);
+button:hover:not(:disabled):not(.primary),
+select:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
 }
 
 .status {
@@ -145,37 +216,16 @@ button:hover {
   color: var(--ok);
 }
 
-button:disabled {
+button:disabled,
+select:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-pre#log {
-  height: 320px;
-  margin: 16px 0 0;
-  padding: 10px 12px;
-  overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font: 12px/1.4 ui-monospace, monospace;
-  white-space: pre-wrap;
-}
-
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-top: 16px;
-}
-
-.controls .push {
-  margin-left: auto;
-}
-
 button[aria-pressed="true"] {
-  border-color: var(--ok);
+  color: var(--on-primary);
+  background: var(--primary);
+  border-color: var(--primary);
 }
 
 dialog {
@@ -187,34 +237,20 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(13 20 36 / 0.6);
 }
 
-#preview-panel {
-  margin: 16px 0 0;
-}
-
-#preview-img {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 16 / 9;
-  background: #000000;
-  border-radius: 6px;
-}
-
-#busy,
 #phone {
   position: fixed;
   inset: 0;
   z-index: 10;
   display: grid;
   place-items: center;
-  background: rgb(0 0 0 / 0.25);
+  background: rgb(13 20 36 / 0.3);
   backdrop-filter: blur(6px);
 }
 
-.busy-card {
+.notice-card {
   display: grid;
   gap: 12px;
   justify-items: center;
@@ -222,9 +258,10 @@ dialog::backdrop {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(13 20 36 / 0.18);
 }
 
-.busy-card p {
+.notice-card p {
   margin: 0;
 }
 
@@ -232,7 +269,7 @@ dialog::backdrop {
   width: 24px;
   height: 24px;
   border: 3px solid var(--border);
-  border-top-color: var(--ok);
+  border-top-color: var(--brand-light);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -246,7 +283,7 @@ dialog::backdrop {
 /* The phone notice sits above everything and cannot be dismissed. */
 #phone {
   z-index: 20;
-  background: rgb(0 0 0 / 0.4);
+  background: rgb(13 20 36 / 0.45);
   backdrop-filter: blur(10px);
 }
 
@@ -255,17 +292,9 @@ dialog::backdrop {
   font-size: 18px;
 }
 
-#phone .busy-card {
+#phone .notice-card {
   max-width: 320px;
   text-align: center;
-}
-
-.settings {
-  margin-top: 16px;
-}
-
-.settings summary {
-  cursor: pointer;
 }
 
 .settings-grid {
@@ -276,6 +305,226 @@ dialog::backdrop {
   margin: 12px 0;
 }
 
-select:disabled {
-  opacity: 0.5;
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────| App |── */
+body.app {
+  height: 100vh;
+  padding-top: 4px;
+  overflow: hidden;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns:
+    var(--side-width, minmax(280px, 33%))
+    8px
+    minmax(0, 1fr);
+  height: 100%;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px 16px;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.side .brand {
+  margin: 0;
+}
+
+.session {
+  display: grid;
+  gap: 10px;
+}
+
+.session .status {
+  margin: 0;
+}
+
+.session button {
+  width: 100%;
+}
+
+.accordion {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.accordion details + details {
+  border-top: 1px solid var(--border);
+}
+
+.accordion summary {
+  padding: 10px 12px;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.accordion .fold {
+  display: grid;
+  gap: 8px;
+  padding: 2px 12px 12px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-grid select {
+  width: 100%;
+}
+
+.note {
+  margin: 0;
+  font-size: 13px;
+}
+
+.splitter {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--border);
+}
+
+.splitter:hover,
+.splitter.dragging {
+  background: var(--accent);
+}
+
+/* A wider hit area than the visible line. */
+.splitter::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stage-head h1 {
+  margin: 0;
+}
+
+#preview-panel {
+  position: relative;
+  flex: 0 1 auto;
+  width: 100%;
+  max-height: 62%;
+  margin: 0;
+  aspect-ratio: 16 / 9;
+  background: #000000;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#preview-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+#preview-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  color: #9aa8c2;
+  text-align: center;
+}
+
+.log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: -4px;
+}
+
+.log-head h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* pywebview switches text selection off for the whole page, so the places a
+   user needs to copy from turn it back on. */
+pre#log,
+code {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+pre#log {
+  flex: 1 1 0;
+  min-height: 96px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 12px/1.4 ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+
+/* Too narrow for two panels, so stack them and drop the splitter. */
+@media (max-width: 760px) {
+  body.app {
+    height: auto;
+    overflow: auto;
+  }
+
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .splitter {
+    display: none;
+  }
+
+  #preview-panel {
+    max-height: none;
+  }
+
+  pre#log {
+    height: 240px;
+    flex: none;
+  }
 }
