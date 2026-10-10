@@ -246,3 +246,12 @@ def test_preview_gets_frames_at_its_own_rate():
     assert live._preview_every == 1
     live.set_preview(None)
     assert live._preview is None
+
+
+def test_changing_the_frame_rate_takes_effect_and_keeps_the_preview_rate():
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H, fps=30)
+    live.set_preview(types.SimpleNamespace(offer=print), 30)
+    assert live._preview_every == 1
+    live.set_fps(60)
+    assert live._fps == 60
+    assert live._preview_every == 2

@@ -142,6 +142,7 @@ class Pipeline:
         self._turn = (0, False)
         self._preview: PreviewSink | None = None
         self._preview_every = 1
+        self._preview_fps: int | None = None
         self._last_error = ""
         self._stopping = threading.Event()
         self._reader_quiet = threading.Event()
@@ -164,8 +165,18 @@ class Pipeline:
         The preview gets every nth frame, so it runs at about its own rate.
         """
         if preview_fps:
+            self._preview_fps = preview_fps
             self._preview_every = max(1, round(self._fps / preview_fps))
         self._preview = sink
+
+    def set_fps(self, fps: int) -> None:
+        """Change the rate frames are written at, taking effect at once.
+
+        The output device keeps its format, only the pace changes.
+        """
+        self._fps = fps
+        if self._preview_fps:
+            self._preview_every = max(1, round(fps / self._preview_fps))
 
     def start(self) -> None:
         size = f"{self._width}x{self._height}"
@@ -285,7 +296,6 @@ class Pipeline:
 
     def _write_loop(self) -> None:
         stream = self._writer.stdin  # type: ignore[union-attr]
-        interval = 1 / self._fps
         deadline = time.monotonic()
         count = 0
         while not self._stopping.is_set():
@@ -301,7 +311,7 @@ class Pipeline:
             if preview is not None and count % self._preview_every == 0:
                 preview.offer(planes)
             count += 1
-            deadline += interval
+            deadline += 1 / self._fps
             delay = deadline - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
