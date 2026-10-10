@@ -1,0 +1,21 @@
+# Filters for rpmlint, each with the reason it does not apply to this package.
+
+# The names of programs are not misspelt words.
+addFilter(r"spelling-error")
+
+# The package is signed when it is released, not when it is built for testing.
+addFilter(r"no-signature")
+
+# Fedora no longer uses the Group tag, and a packager is optional.
+addFilter(r"no-group-tag")
+addFilter(r"no-packager-tag")
+
+# The app is one file with its libraries packed inside it, so rpm cannot see
+# which system libraries they need. They are listed by hand, from the same
+# table the app's own dependency check uses (phone_webcam/deps.py).
+addFilter(r"explicit-lib-dependency")
+
+# Fedora compresses man pages with gzip, and the SPDX licence name is what
+# Fedora asks for. These two come from rpmlint's generic, non-Fedora defaults.
+addFilter(r"manpage-not-compressed")
+addFilter(r"invalid-license")

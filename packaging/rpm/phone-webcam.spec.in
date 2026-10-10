@@ -1,0 +1,69 @@
+# Packages the prebuilt Nuitka binary, nothing is compiled while building the
+# RPM. The placeholders in @ signs are filled in by scripts/build-rpm.sh.
+Name:           phone-webcam
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        @SUMMARY@
+License:        GPL-3.0-or-later
+URL:            @URL@
+ExclusiveArch:  x86_64
+
+Source0:        phone-webcam
+Source1:        com.griffin_web_studio.phone_webcam.desktop
+Source2:        com.griffin_web_studio.phone_webcam.metainfo.xml
+Source3:        com.griffin_web_studio.phone_webcam.svg
+Source4:        phone-webcam.1
+Source5:        LICENSE
+
+# The binary is a launcher with the whole app appended to it. Stripping it,
+# which the default post-install steps would do, cuts the app off, so none of
+# them run. There is also nothing to make debug packages from.
+%global debug_package %{nil}
+%global __os_install_post %{nil}
+
+# Everything the app unpacks needs glibc 2.38 at most, which rpm works out from
+# the launcher by itself. These are the tools and libraries it runs with.
+@REQUIRES@
+# The kernel module is in RPM Fusion, so it can only be recommended. The app
+# checks for it when it starts and says what is missing.
+@RECOMMENDS@
+
+%description
+Turns the camera of an Android phone into a virtual webcam that other apps,
+such as video calls and browsers, can use. The phone is connected over USB, and
+the picture can be turned, mirrored and previewed while it is running.
+
+It needs scrcpy 2.2 or newer and the v4l2loopback kernel module. The app checks
+for both when it starts and says what is missing.
+
+%prep
+# Nothing to unpack, the sources are the finished files. The licence is copied
+# into the build folder, which is where %license looks for it.
+cp -p %{SOURCE5} .
+
+%build
+# Nothing to build, the binary is made by scripts/build.sh.
+
+%install
+install -Dpm 0755 %{SOURCE0} %{buildroot}%{_bindir}/phone-webcam
+install -Dpm 0644 %{SOURCE1} \
+    %{buildroot}%{_datadir}/applications/com.griffin_web_studio.phone_webcam.desktop
+install -Dpm 0644 %{SOURCE2} \
+    %{buildroot}%{_datadir}/metainfo/com.griffin_web_studio.phone_webcam.metainfo.xml
+install -Dpm 0644 %{SOURCE3} \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.griffin_web_studio.phone_webcam.svg
+# Compressing man pages is one of the steps switched off above.
+install -dm 0755 %{buildroot}%{_mandir}/man1
+gzip -9n -c %{SOURCE4} > %{buildroot}%{_mandir}/man1/phone-webcam.1.gz
+
+%files
+%license LICENSE
+%{_bindir}/phone-webcam
+%{_datadir}/applications/com.griffin_web_studio.phone_webcam.desktop
+%{_datadir}/metainfo/com.griffin_web_studio.phone_webcam.metainfo.xml
+%{_datadir}/icons/hicolor/scalable/apps/com.griffin_web_studio.phone_webcam.svg
+%{_mandir}/man1/phone-webcam.1.gz
+
+%changelog
+* @CHANGELOG_DATE@ @MAINTAINER@ - @VERSION@-1
+- Release @VERSION@.
