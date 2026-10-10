@@ -495,7 +495,9 @@ def running_with_process(monkeypatch):
     cam, events = make(monkeypatch)
     ended, rates = [], []
     cam._process = types.SimpleNamespace(terminate=lambda: ended.append(1))
-    cam._pipeline = types.SimpleNamespace(set_fps=rates.append)
+    cam._pipeline = types.SimpleNamespace(
+        set_fps=rates.append, expect_reader_end=lambda: None
+    )
     cam.state = webcam.RUNNING
     return cam, events, ended, rates
 
@@ -868,6 +870,34 @@ def test_the_failure_count_starts_again_for_every_run(monkeypatch):
     cam._stream("/dev/video0")
     counts = [line for line in logs(events) if "refused to capture" in line]
     assert len(counts) == 2 and all("3 times" in line for line in counts)
+
+
+# ───────────────────────────────────────────────────────────| A quiet switch |──
+def test_the_reader_is_told_to_expect_the_end_before_scrcpy_is_stopped(
+    monkeypatch,
+):
+    cam, _ = make(monkeypatch)
+    order = []
+    cam._process = types.SimpleNamespace(terminate=lambda: order.append("stop"))
+    cam._pipeline = types.SimpleNamespace(
+        expect_reader_end=lambda: order.append("quiet")
+    )
+    cam.state = webcam.RUNNING
+    cam.set_camera("1")
+    assert order == ["quiet", "stop"]
+
+
+def test_changing_the_frame_rate_live_also_expects_the_feed_to_end(monkeypatch):
+    cam, _ = make(monkeypatch)
+    order = []
+    cam._process = types.SimpleNamespace(terminate=lambda: order.append("stop"))
+    cam._pipeline = types.SimpleNamespace(
+        set_fps=lambda fps: None,
+        expect_reader_end=lambda: order.append("quiet"),
+    )
+    cam.state = webcam.RUNNING
+    cam.set_settings({"fps": 60})
+    assert order == ["quiet", "stop"]
 
 
 # ───────────────────────────────────────────────────────────| The command shown |──

@@ -349,3 +349,27 @@ def test_taking_the_slate_off_shows_the_live_picture_at_once():
     assert live._slate is not None
     live.set_slate(None)
     assert live._slate is None and bytes(live._latest) == bytes(frame())
+
+
+def test_a_feed_that_ends_after_the_reader_was_told_to_expect_it_is_not_reported():
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H)
+    logs = []
+    live._log = logs.append
+    live.expect_reader_end()
+    live._read_loop(FakeProcess(b""))
+    assert logs == []
+
+
+def test_restarting_the_reader_lifts_the_expectation_again(monkeypatch):
+    readers = iter([FakeProcess(b""), FakeProcess(b"")])
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        lambda *a, **k: FakeProcess() if k.get("stdin") else next(readers),
+    )
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H, fps=500)
+    live.start()
+    live.expect_reader_end()
+    live.restart_reader()
+    assert not live._reader_quiet.is_set()  # a real end is reported again
+    live.stop()

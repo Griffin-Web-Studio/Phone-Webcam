@@ -265,6 +265,16 @@ class Pipeline:
         finally:
             self._reader_quiet.clear()
 
+    def expect_reader_end(self) -> None:
+        """The reader's feed is about to end on purpose, so do not report it.
+
+        scrcpy is stopped to switch camera, and the reader sees its recording
+        end a moment later. That has to be known before scrcpy is stopped, not
+        when the reader is restarted, which is after it has already been seen.
+        Restarting the reader lifts it again.
+        """
+        self._reader_quiet.set()
+
     def quiet(self) -> None:
         """Expect the feed to end, so its ending is not reported as a fault."""
         self._stopping.set()

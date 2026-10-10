@@ -306,6 +306,8 @@ class Webcam:
         assert self._process is not None
         self._switching = True
         self._switched = True
+        if self._pipeline is not None:
+            self._pipeline.expect_reader_end()
         self._set_state(state)
         self._process.terminate()
 
