@@ -324,6 +324,13 @@ class Pipeline:
                     return
                 got += count
             self._latest = frame
+            if first:
+                first = False
+                # The camera takes seconds to start, which is not its rate.
+                since = time.monotonic()
+                if self._on_first_frame is not None:
+                    self._on_first_frame()
+                continue
             frames += 1
             elapsed = time.monotonic() - since
             if elapsed >= RATE_REPORT_SECONDS:
@@ -333,10 +340,6 @@ class Pipeline:
                     "per second is being output."
                 )
                 frames, since = 0, time.monotonic()
-            if first:
-                first = False
-                if self._on_first_frame is not None:
-                    self._on_first_frame()
 
     def _write_loop(self) -> None:
         stream = self._writer.stdin  # type: ignore[union-attr]

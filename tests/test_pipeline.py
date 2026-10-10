@@ -1,6 +1,8 @@
 """Tests for turning frames and for the pipeline's process handling."""
 
+import itertools
 import subprocess
+import threading
 import time
 import types
 
@@ -408,3 +410,33 @@ def test_debugging_reports_the_rate_the_phone_really_sends(monkeypatch):
         "The phone sent" in line and "200 per second is being output" in line
         for line in seen
     )
+
+
+def test_the_rate_is_counted_from_the_first_picture_not_from_the_start(
+    monkeypatch,
+):
+    """The camera needs seconds to start, which must not lower its rate."""
+    monkeypatch.setattr(pipeline, "RATE_REPORT_SECONDS", 0.4)
+    reader_times = itertools.chain([0.0, 100.0, 100.5], itertools.repeat(101))
+    real = time.monotonic
+    holder = {}
+
+    def clock():
+        live = holder.get("live")
+        threads = live._reader_threads if live else []
+        if threads and threading.current_thread() is threads[0]:
+            return next(reader_times)
+        return real()
+
+    monkeypatch.setattr(pipeline.time, "monotonic", clock)
+    seen = []
+    reader = FakeProcess(bytes(frame()) * 2)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen(reader, FakeProcess()))
+    live = pipeline.Pipeline(
+        "src", "out", lambda line: None, None, W, H, fps=200, debug=seen.append
+    )
+    holder["live"] = live
+    live.start()
+    live._reader_threads[0].join(timeout=5)
+    live.stop()
+    assert any("1 pictures in 0.5 s, 2.0 per second" in line for line in seen)
