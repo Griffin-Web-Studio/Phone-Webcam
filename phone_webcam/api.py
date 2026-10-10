@@ -8,6 +8,7 @@ from dataclasses import asdict
 from typing import Any
 
 from phone_webcam import config, deps, pipeline, webcam
+from phone_webcam.clipboard import Clipboard
 
 
 class Api:
@@ -16,6 +17,7 @@ class Api:
     def __init__(self, simulate: Iterable[str] = ()) -> None:
         self._simulate = tuple(simulate)
         self._window: Any = None
+        self._clipboard = Clipboard()
         # Events leave through one thread, so they reach the page in order.
         self._events: queue.Queue[dict | None] = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
@@ -42,6 +44,10 @@ class Api:
             "ready": not deps.blocking(results),
             "command": deps.install_command(missing, deps.detect_family()),
         }
+
+    def copy_text(self, text: str) -> None:
+        """Put text on the system clipboard."""
+        self._clipboard.copy(text)
 
     # ───────────────────────────────────────────────────────────| Webcam |──
     def get_state(self) -> str:

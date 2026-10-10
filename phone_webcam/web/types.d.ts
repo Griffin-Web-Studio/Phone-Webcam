@@ -31,6 +31,7 @@ export type WebcamEvent =
 export interface Api {
   get_report(): Promise<Report>;
   get_state(): Promise<string>;
+  copy_text(text: string): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   get_orientation(): Promise<Orientation>;

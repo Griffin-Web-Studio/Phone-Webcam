@@ -89,10 +89,10 @@ async function refresh() {
 
 copy.addEventListener("click", async () => {
   try {
-    await navigator.clipboard.writeText(command.textContent ?? "");
+    await window.pywebview.api.copy_text(command.textContent ?? "");
     copy.textContent = "Copied";
   } catch {
-    // Clipboard access can be refused, so select the text for Ctrl+C.
+    // Copying through Python failed, so select the text for Ctrl+C.
     const range = document.createRange();
     range.selectNodeContents(command);
     const selection = window.getSelection();
