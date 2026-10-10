@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.griffin_web_studio.phone_webcam</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Phone Webcam</name>
+  <summary>Use an Android phone's camera as a webcam</summary>
+  <developer id="com.griffin_web_studio">
+    <name>Griffin Web Studio</name>
+  </developer>
+  <description>
+    <p>
+      Turns the camera of an Android phone into a virtual webcam that other
+      apps, such as video calls and browsers, can use. The phone is connected
+      over USB, and the picture can be turned, mirrored and previewed while it
+      is running.
+    </p>
+    <ul>
+      <li>Switch between the phone's cameras without interrupting the call</li>
+      <li>Rotate and mirror the picture live</li>
+      <li>Change the frame rate and bitrate while running</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">com.griffin_web_studio.phone_webcam.desktop</launchable>
+  <icon type="stock">com.griffin_web_studio.phone_webcam</icon>
+  <url type="homepage">https://gitlab.com/griffin-web-studio/garage/phone-webcam</url>
+  <provides>
+    <binary>phone-webcam</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

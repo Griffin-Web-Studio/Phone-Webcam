@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Phone Webcam
+GenericName=Phone camera as a webcam
+Comment=Use an Android phone's camera as a webcam
+Exec=phone-webcam
+TryExec=phone-webcam
+Icon=com.griffin_web_studio.phone_webcam
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=webcam;camera;phone;android;scrcpy;
+StartupNotify=false

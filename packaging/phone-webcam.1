@@ -1,0 +1,51 @@
+.TH PHONE-WEBCAM 1 "October 2026" "phone-webcam" "User Commands"
+.SH NAME
+phone-webcam \- use an Android phone's camera as a webcam
+.SH SYNOPSIS
+.B phone-webcam
+[\fB\-\-check\fR]
+[\fB\-\-simulate\-missing\fR \fIKEYS\fR]
+.SH DESCRIPTION
+.B phone-webcam
+turns the camera of an Android phone, connected over USB, into a virtual webcam
+that other applications can use. It runs scrcpy to read the camera, turns the
+picture as asked, and writes it to a v4l2loopback device. The picture can be
+rotated, mirrored and previewed while it is running, and the camera, frame
+rate and bitrate can be changed without interrupting the webcam.
+.PP
+When it starts, it checks that everything it needs is installed and tells you
+what is missing.
+.SH OPTIONS
+.TP
+.B \-\-check
+Run every dependency check, print the result and exit, without opening a
+window.
+.TP
+.BI \-\-simulate\-missing " KEYS"
+Pretend that the named checks fail, to preview how a missing tool is shown.
+.I KEYS
+is a comma separated list of check names.
+.TP
+.B \-h, \-\-help
+Show the usage and exit.
+.SH FILES
+.TP
+.I ~/.config/phone-webcam/prefs.json
+The saved orientation, stream settings and side panel width.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+With \fB\-\-check\fR, a required dependency is missing.
+.TP
+.B 2
+The graphical stack is incomplete, so no window can be opened.
+.TP
+.B 3
+The window could not be opened.
+.SH SEE ALSO
+.BR scrcpy (1),
+.BR adb (1),
+.BR ffmpeg (1)
