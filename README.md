@@ -85,6 +85,15 @@ Debian does not package a scrcpy new enough for camera mirroring, so install it
 from the [official releases](https://github.com/Genymobile/scrcpy/releases) and
 put `scrcpy` and `adb` on your `PATH`.
 
+### Nightly builds
+
+Every night that `main` has changed, a build of it is published as a rolling
+**nightly** release on the
+[Releases page](https://gitlab.com/griffin-web-studio/garage/phone-webcam/-/releases/nightly),
+with the same files as a real release. It is an automatic build, not a release, so
+use it to try what is coming and expect rough edges. Its version looks like
+`0.2.0+nightly.57.a1b2c3d`: the release it is built on, the pipeline and the commit.
+
 ### Just the binary
 
 The package contains one file, which you can also run on its own. Nothing is
