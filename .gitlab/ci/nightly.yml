@@ -1,0 +1,132 @@
+# ─────────────────────| Phone Webcam - Nightly child pipeline |────────────────
+#
+# Only ever triggered via trigger:nightly in the top-level .gitlab-ci.yml, and
+# only when check:nightly determined main has moved since the last successful
+# nightly publish - in that case check:nightly copies this file verbatim into
+# generated-nightly.yml, which is what actually runs. When main hasn't moved,
+# check:nightly generates a single no-op job instead and this file is never
+# used, so nothing here needs its own "is there anything to do?" gate.
+
+default:
+  interruptible: true
+  tags:
+    - linux
+
+stages:
+  - test
+  - build
+  - publish
+
+variables:
+  PACKAGE: phone-webcam
+  MAINTAINER: "$GITLAB_USER_NAME <$GITLAB_USER_EMAIL>"
+  UV_FROZEN: "1"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
+
+# ────────────────────────────────────────────────────────────────────| Test |──
+
+test:
+  stage: test
+  image: python:3.14-trixie
+  cache:
+    key: uv
+    paths:
+      - .uv-cache/
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq $(python3 scripts/gen_requires.py --family debian --kind required)
+    - pip install uv --quiet
+  script:
+    - uv sync --extra dev
+    - uv run pytest -q --cov --cov-report=term-missing --cov-fail-under=80
+  coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+)%/'
+
+# ───────────────────────────────────────────────────| Shared build template |──
+
+.build:
+  stage: build
+  image: python:3.14-trixie
+  cache:
+    - key: uv
+      paths:
+        - .uv-cache/
+    - key: ccache
+      paths:
+        - .ccache/
+  before_script:
+    # patchelf is required by Nuitka's onefile mode on Linux. The rest builds
+    # and checks the packages.
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq patchelf ccache dpkg-dev rpm
+      lintian rpmlint desktop-file-utils appstream
+    - pip install uv --quiet
+  script:
+    - bash scripts/build.sh
+    - bash scripts/build-deb.sh
+    - bash scripts/build-rpm.sh
+    - bash scripts/check-packages.sh --require-tools
+  artifacts:
+    paths:
+      - dist/phone-webcam
+      - dist/*.deb
+      - dist/*.rpm
+    expire_in: 3 days
+
+# Suffixes the version with "+nightly.<pipeline>.<short SHA>" before anything is
+# built, so the packages report e.g. "0.2.0+nightly.57.a1b2c3d" and a build can
+# be traced back to the commit it came from. It is a PEP 440 local version,
+# which uv accepts, and which sorts after the release it is built on. This only
+# mutates the CI job's worktree, never committed anywhere.
+#
+# BUILD_NUMBER makes every nightly binary unpack into a folder of its own. The
+# folder is named after the version, and every nightly would otherwise share one,
+# so people would keep running the first nightly they ever downloaded.
+build:nightly:
+  extends: .build
+  needs: [test]
+  variables:
+    BUILD_NUMBER: $CI_PIPELINE_IID
+  before_script:
+    - !reference [.build, before_script]
+    - python3 scripts/patch_nightly_version.py "$CI_PIPELINE_IID.$CI_COMMIT_SHORT_SHA"
+
+# ─────────────────────────────────────────────────| Shared publish template |──
+
+.publish:
+  stage: publish
+  image: curlimages/curl:latest
+  interruptible: false # never cancel a mid-flight upload
+  script:
+    - |
+      set -eu
+      mkdir upload
+      cp dist/phone-webcam upload/phone-webcam
+      cp dist/*.deb upload/phone-webcam.deb
+      cp dist/*.rpm upload/phone-webcam.rpm
+      (cd upload && sha256sum phone-webcam phone-webcam.deb phone-webcam.rpm > SHA256SUMS)
+      for file in upload/*; do
+        curl --fail --silent --show-error \
+             --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+             --upload-file "$file" \
+             "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$PACKAGE_VERSION/$(basename "$file")"
+      done
+
+# Overwrites the single "nightly" entry on every scheduled run that has
+# changes. Also records $CI_COMMIT_SHA as nightly-sha.txt so the next
+# scheduled run's check:nightly (in the parent pipeline) can detect whether
+# main has moved since this build.
+publish:nightly:
+  extends: .publish
+  needs: [build:nightly]
+  variables:
+    PACKAGE_VERSION: nightly
+  script:
+    - !reference [.publish, script]
+    - |
+      echo -n "$CI_COMMIT_SHA" > nightly-sha.txt
+      curl --fail --silent --show-error \
+           --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+           --upload-file nightly-sha.txt \
+           "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/nightly/nightly-sha.txt"

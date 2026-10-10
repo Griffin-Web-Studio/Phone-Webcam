@@ -206,3 +206,13 @@ nuitka-crash-report.xml
 
 # ccache, which speeds up the C compiling Nuitka does.
 .ccache/
+
+# Files the CI pipeline writes into its own checkout. Running a script by hand
+# can leave them behind.
+generated-nightly.yml
+nightly-sha.txt
+release-notes.md
+upload/
+
+# uv's cache, which the pipeline keeps inside the checkout so it can be cached.
+.uv-cache/

@@ -1,0 +1,391 @@
+# ────────────────────────| Phone Webcam CI/CD pipeline |────────────────────────
+#
+# Adapted from the git-sentinel pipeline, with the same process: conventional
+# commits decide what runs, commitizen makes the release tags, and a nightly
+# schedule publishes a rolling build. What differs is the output. There is one
+# platform (Linux), and a release is three files, not a binary alone: the
+# self-contained binary, a .deb and an .rpm made from it.
+#
+# STAGES
+#
+#   - .pre       (implicit) checks whether main has moved since the last
+#                 nightly build
+#   - test       pytest with a coverage gate (runs on every pipeline)
+#   - build      compile the Nuitka binary, make the .deb and .rpm from it, and
+#                 check the packages with lintian, rpmlint and the metadata
+#                 validators
+#   - publish    upload the binary, the packages and their checksums to the
+#                 Generic Package Registry
+#   - release    create a GitLab Release (tagged builds only)
+#
+#
+# TRIGGERS
+#
+#   MR / Commit on main:
+#     -> test
+#     -> build      (binary, .deb, .rpm, and their checks)
+#
+#   Versioned tag (cz bump makes it, see CONTRIBUTING.md):
+#     -> test
+#     -> build
+#     -> publish
+#     -> release
+#
+#   Scheduled pipeline (main):
+#     -> check:nightly    compares $CI_COMMIT_SHA against the SHA recorded by
+#                          the last successful nightly publish and generates
+#                          generated-nightly.yml: a copy of
+#                          .gitlab/ci/nightly.yml (the real test/build/publish
+#                          chain) if main has moved, or a single no-op job if
+#                          not. Always succeeds - it never fails on purpose,
+#                          it just decides what the next job runs.
+#     -> trigger:nightly  runs generated-nightly.yml as a child pipeline
+#                          (strategy: depend, so this job's own status
+#                          mirrors it). On an unchanged main that's just the
+#                          no-op job, so the whole test/build/publish suite
+#                          is skipped - not failed. See .gitlab/ci/nightly.yml
+#                          for the real nightly chain.
+#
+#
+# COMMIT TYPE FILTER
+#
+#   Skipped entirely:
+#   - docs      No code changes; nothing to test, build, or release.
+#   - chore     Maintenance tasks (deps, config, tooling) with no shippable
+#                output.
+#   - style     Formatting only; nothing to test, build, or release.
+#
+#   Partially skipped (test only; no build, publish, or release):
+#   - test      Test changes only; code itself is unchanged.
+#
+#   Partially skipped    |-> test -> build -|
+#   - ci        Pipeline config changes; build runs to validate the config but
+#                no shippable output (publish/release are tag/schedule gated).
+#
+#   Partially skipped    |-> test -> build -|
+#   - build     Dependency or toolchain changes; not a shippable feature or fix.
+#
+#   Full pipeline        |-> test -> build -> publish -> release --|
+#   - feat      Minor version bump.
+#   - fix       Patch version bump.
+#   - perf      Patch version bump.
+#   - refactor  Patch version bump.
+#   - revert    Patch version bump.
+#   - BREAKING  Major version bump.
+#
+#
+# NIGHTLY (setup):
+#
+#   Go to CI/CD > Schedules in GitLab and create a schedule targeting the main
+#   branch (e.g. daily at 03:00 UTC).  Each run overwrites the single "nightly"
+#   package entry so the download URL stays stable.
+#
+#   Nightly download URLs (once a schedule has run):
+#   - $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/phone-webcam/nightly/phone-webcam
+#   - $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/phone-webcam/nightly/phone-webcam.deb
+#   - $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/phone-webcam/nightly/phone-webcam.rpm
+#   - $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/phone-webcam/nightly/SHA256SUMS
+#
+#   Change detection: check:nightly downloads
+#   .../packages/generic/phone-webcam/nightly/nightly-sha.txt (the commit SHA
+#   recorded by the last successful nightly publish) and compares it to
+#   $CI_COMMIT_SHA. A match means main hasn't moved since the last nightly, so
+#   the generated child pipeline is a single no-op job instead of the real
+#   test/build/publish chain. No file yet (first-ever run) is treated as
+#   "always build".
+#
+#
+# SETTINGS
+#
+#   MAINTAINER (optional CI/CD variable) is the "Name <email>" written into the
+#   packages. Without it, the person who started the pipeline is used.
+
+# ──────────────────────────────────────────────────────────| Workflow Setup |──
+#
+#
+# Prevents duplicate pipelines when pushing to a branch with an open MR. Without
+# this, GitLab fires both a branch pipeline and an MR pipeline.
+#
+# auto_cancel on_new_commit: interruptible - when a new commit is pushed, cancel
+# any running jobs marked `interruptible: true`.
+# The "publish" and "release" jobs are explicitly marked `interruptible: false`
+# so they are never cancelled mid-run.
+workflow:
+  auto_cancel:
+    on_new_commit: interruptible
+  rules:
+      # nightly always runs
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+      # release tags always run
+    - if: $CI_COMMIT_TAG
+
+      # skip docs/chore/style
+    - if: $CI_COMMIT_MESSAGE =~ /^(docs|chore|style)(\(.+\))?!?:/
+      when: never
+
+      # MR pipelines only (suppresses branch pipeline)
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+      # pushes to main
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# By default run all jobs on Linux and can be interrupted.
+default:
+  interruptible: true
+  tags:
+    - linux
+
+stages:
+  - test
+  - build
+  - publish
+  - release
+
+variables:
+  PACKAGE: phone-webcam
+  MAINTAINER: "$GITLAB_USER_NAME <$GITLAB_USER_EMAIL>"
+  # uv installs exactly what uv.lock says, and never rewrites it.
+  UV_FROZEN: "1"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  # Nuitka compiles through ccache, which makes a second build much quicker.
+  CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
+
+# ───────────────────────────────────────────────────────| Nightly change gate |──
+#
+# Runs before everything else on a scheduled pipeline. Compares the current
+# commit against the SHA recorded by the last successful nightly publish and
+# generates the actual child pipeline config that trigger:nightly will run -
+# it always exits 0. If main hasn't moved, generated-nightly.yml is a single
+# no-op job; otherwise it's a copy of .gitlab/ci/nightly.yml (the real
+# test/build/publish chain).
+#
+# This bakes the "anything to do?" decision directly into the generated YAML
+# content rather than passing a variable for the child pipeline's own rules
+# to read - GitLab does not reliably make a parent job's variables available
+# when it evaluates a *child* pipeline's rules (gitlab-org/gitlab#408160), so
+# a $NIGHTLY_HAS_CHANGES-style variable can silently read as unset there and
+# make the gate look like it's stuck on "nothing changed".
+check:nightly:
+  stage: .pre
+  image: curlimages/curl:latest
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - |
+      rm -f nightly-sha.txt
+      curl --fail --silent --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+           -o nightly-sha.txt \
+           "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/nightly/nightly-sha.txt" \
+           || true
+      LAST_SHA="$(cat nightly-sha.txt 2>/dev/null || echo "")"
+      if [ "$LAST_SHA" = "$CI_COMMIT_SHA" ]; then
+        echo "No new commits since last nightly build ($LAST_SHA) - nothing to do."
+        printf '%s\n' \
+          'nightly:noop:' \
+          '  tags:' \
+          '    - linux' \
+          '  image: alpine:latest' \
+          '  script:' \
+          '    - echo "No new commits since the last nightly build - nothing to do."' \
+          > generated-nightly.yml
+      else
+        echo "New commits since last nightly build ($CI_COMMIT_SHA) - proceeding."
+        cp .gitlab/ci/nightly.yml generated-nightly.yml
+      fi
+  artifacts:
+    paths:
+      - generated-nightly.yml
+
+# Runs the config check:nightly generated. strategy: depend makes this job's
+# own status mirror the child pipeline's status, so a real nightly failure
+# (test/build/publish) still shows up as a failed pipeline here - only the
+# "nothing to do" case stays green.
+#
+# forward.yaml_variables: false stops this pipeline's own YAML-defined
+# variables (e.g. the global PACKAGE above) from being forwarded into the child
+# as trigger variables. Forwarded variables outrank a job's own `variables:` in
+# the child (gitlab-org/gitlab#404772), so anything the child sets for itself
+# could be silently overridden by the value from up here. The child defines
+# everything it needs itself, so nothing from up here should leak in.
+trigger:nightly:
+  stage: test
+  needs: [check:nightly]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  trigger:
+    include:
+      - artifact: generated-nightly.yml
+        job: check:nightly
+    strategy: depend
+    forward:
+      yaml_variables: false
+
+# ────────────────────────────────────────────────────────────────────| Test |──
+#
+# pytest with an 80% coverage gate. The system packages are the ones the app's
+# own dependency check asks for on Debian, taken from the same table
+# (phone_webcam/deps.py), so the tests run against what a real install has: the
+# Qt libraries, and an ffmpeg that can draw SVG for the cover image tests.
+#
+# python:3.14-trixie is pinned to Debian 13, because the glibc of the image the
+# binary is built on decides which systems it runs on (2.38, see
+# docs/packaging.md).
+test:
+  stage: test
+  image: python:3.14-trixie
+  rules:
+      # handled by the nightly child pipeline instead
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - when: always
+  cache:
+    key: uv
+    paths:
+      - .uv-cache/
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq $(python3 scripts/gen_requires.py --family debian --kind required)
+    - pip install uv --quiet
+  script:
+    - uv sync --extra dev
+    - uv run pytest -q --cov --cov-report=term-missing --cov-fail-under=80
+  coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+)%/'
+
+# ───────────────────────────────────────────────────| Shared build template |──
+#
+# The binary first, then both packages made from it, then the checks on the
+# packages. Nothing is compiled twice, a package is the binary plus a few files.
+
+.build:
+  stage: build
+  image: python:3.14-trixie
+  cache:
+    - key: uv
+      paths:
+        - .uv-cache/
+    - key: ccache
+      paths:
+        - .ccache/
+  before_script:
+    # patchelf is required by Nuitka's onefile mode on Linux. The rest builds
+    # and checks the packages.
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq patchelf ccache dpkg-dev rpm
+      lintian rpmlint desktop-file-utils appstream
+    - pip install uv --quiet
+  script:
+    - bash scripts/build.sh
+    - bash scripts/build-deb.sh
+    - bash scripts/build-rpm.sh
+    - bash scripts/check-packages.sh --require-tools
+  artifacts:
+    paths:
+      - dist/phone-webcam
+      - dist/*.deb
+      - dist/*.rpm
+    expire_in: 1 week
+
+# ── Build jobs ────────────────────────────────────────────────────────────────
+
+# Skipped on scheduled pipelines (build:nightly handles those) and on test:
+# commits (no binary needed when only tests changed).
+build:
+  extends: .build
+  rules:
+      # not on schedule
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+
+      # not when commit type is test
+    - if: $CI_COMMIT_MESSAGE =~ /^test(\(.+\))?!?:/
+      when: never
+
+      # otherwise always
+    - when: always
+
+# Nightly builds live in .gitlab/ci/nightly.yml, triggered by trigger:nightly
+# above.
+
+# ─────────────────────────────────────────────────| Shared publish template |──
+#
+# The files are published under fixed names, with the version in the address
+# (.../phone-webcam/v1.2.3/phone-webcam.deb), so the links in a release never
+# need the version worked out. A package version can contain a ~, which the
+# registry may refuse in a file name, and this sidesteps that too.
+
+.publish:
+  stage: publish
+  image: curlimages/curl:latest
+  interruptible: false    # never cancel a mid-flight upload
+  script:
+    - |
+      set -eu
+      mkdir upload
+      cp dist/phone-webcam upload/phone-webcam
+      cp dist/*.deb upload/phone-webcam.deb
+      cp dist/*.rpm upload/phone-webcam.rpm
+      (cd upload && sha256sum phone-webcam phone-webcam.deb phone-webcam.rpm > SHA256SUMS)
+      for file in upload/*; do
+        curl --fail --silent --show-error \
+             --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+             --upload-file "$file" \
+             "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$PACKAGE_VERSION/$(basename "$file")"
+      done
+
+# ────────────────────────────────────────────────────────────| Publish jobs |──
+
+publish:release:
+  extends: .publish
+  needs: [build]
+  variables:
+    PACKAGE_VERSION: $CI_COMMIT_TAG
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+
+# publish:nightly lives in .gitlab/ci/nightly.yml, triggered by trigger:nightly
+# above.
+
+# ─────────────────────────────────────────────────────────────────| Release |──
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  interruptible: false    # never cancel a mid-flight release
+  needs:
+    - publish:release
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  script:
+    - |
+      if echo "$CI_COMMIT_TAG" | grep -qE '[-.]alpha\.'; then
+        CHANNEL="alpha"
+      elif echo "$CI_COMMIT_TAG" | grep -qE '[-.]beta\.'; then
+        CHANNEL="beta"
+      elif echo "$CI_COMMIT_TAG" | grep -qE '[-.]rc\.'; then
+        CHANNEL="rc"
+      else
+        CHANNEL="stable"
+      fi
+      sh scripts/gen-release-notes.sh "$CI_COMMIT_TAG" "$CHANNEL" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$CI_COMMIT_TAG" \
+        > release-notes.md
+  release:
+    name: "Phone Webcam $CI_COMMIT_TAG"
+    description: "./release-notes.md"
+    tag_name: "$CI_COMMIT_TAG"
+    assets:
+      links:
+        - name: "phone-webcam (Linux x86_64, self-contained binary)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$CI_COMMIT_TAG/phone-webcam"
+          link_type: package
+        - name: "phone-webcam.deb (Debian and Ubuntu)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$CI_COMMIT_TAG/phone-webcam.deb"
+          link_type: package
+        - name: "phone-webcam.rpm (Fedora)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$CI_COMMIT_TAG/phone-webcam.rpm"
+          link_type: package
+        - name: "SHA256SUMS"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$CI_COMMIT_TAG/SHA256SUMS"
+          link_type: other
