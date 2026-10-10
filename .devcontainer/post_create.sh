@@ -15,7 +15,7 @@ source "${UV_PROJECT_ENVIRONMENT:-.venv}/bin/activate"
 # uses the host's.
 PACKAGES=$(uv run python -c "
 from phone_webcam import deps
-keys = ['qt_libs', 'v4l2_ctl', 'ffmpeg', 'pkexec', 'modprobe']
+keys = ['qt_libs', 'v4l2_ctl', 'v4l2loopback_ctl', 'ffmpeg', 'pkexec', 'modprobe']
 print(' '.join(deps.packages_for(keys, 'debian')))
 ")
 sudo apt-get update -qq
