@@ -21,6 +21,26 @@ export interface Orientation {
   mirror: boolean;
 }
 
+export interface StreamSettings {
+  resolution: "720p" | "1080p";
+  fps: number;
+  bitrate: number;
+  preview_fps: number;
+}
+
+export type PhoneState =
+  | "ready"
+  | "unauthorised"
+  | "offline"
+  | "missing"
+  | "unavailable";
+
+export interface CameraInfo {
+  id: string;
+  label: string;
+  facing: string;
+}
+
 export interface PreviewEvent {
   type: "preview";
   state: "starting" | "open" | "stopping" | "closed";
@@ -32,14 +52,23 @@ export type WebcamEvent =
   | { type: "log"; line: string }
   | ({ type: "orientation" } & Orientation)
   | PreviewEvent
+  | { type: "camera"; id: string }
+  | ({ type: "settings" } & StreamSettings)
+  | { type: "phone"; state: PhoneState; serial: string }
   | { type: "confirm"; message: string };
 
 export interface Api {
   get_report(): Promise<Report>;
   get_state(): Promise<string>;
+  get_phone(): Promise<PhoneState>;
   copy_text(text: string): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
+  list_cameras(): Promise<CameraInfo[]>;
+  get_camera(): Promise<string>;
+  set_camera(id: string): Promise<void>;
+  get_settings(): Promise<StreamSettings>;
+  set_settings(settings: Partial<StreamSettings>): Promise<StreamSettings>;
   get_orientation(): Promise<Orientation>;
   set_orientation(rotation: number, mirror: boolean): Promise<void>;
   answer(yes: boolean): Promise<void>;

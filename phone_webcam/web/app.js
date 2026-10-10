@@ -4,6 +4,9 @@
 /** @typedef {import("./types").WebcamEvent} WebcamEvent */
 /** @typedef {import("./types").Orientation} Orientation */
 /** @typedef {import("./types").PreviewEvent} PreviewEvent */
+/** @typedef {import("./types").CameraInfo} CameraInfo */
+/** @typedef {import("./types").PhoneState} PhoneState */
+/** @typedef {import("./types").StreamSettings} StreamSettings */
 
 const statusEl = byId("status", HTMLElement);
 const startBtn = byId("start", HTMLButtonElement);
@@ -17,6 +20,16 @@ const turnEl = byId("turn", HTMLElement);
 const previewBtn = byId("preview", HTMLButtonElement);
 const previewPanel = byId("preview-panel", HTMLElement);
 const previewImg = byId("preview-img", HTMLImageElement);
+const cameraSelect = byId("camera", HTMLSelectElement);
+const camerasRefresh = byId("cameras-refresh", HTMLButtonElement);
+const setResolution = byId("set-resolution", HTMLSelectElement);
+const setFps = byId("set-fps", HTMLSelectElement);
+const setBitrate = byId("set-bitrate", HTMLSelectElement);
+const setPreviewFps = byId("set-preview-fps", HTMLSelectElement);
+const appMain = byId("app", HTMLElement);
+const phoneOverlay = byId("phone", HTMLElement);
+const phoneTitle = byId("phone-title", HTMLElement);
+const phoneText = byId("phone-text", HTMLElement);
 const busy = byId("busy", HTMLElement);
 const busyText = byId("busy-text", HTMLElement);
 const busyDismiss = byId("busy-dismiss", HTMLButtonElement);
@@ -34,6 +47,7 @@ const LABELS = {
   starting: "Starting...",
   running: "Running",
   stopping: "Stopping...",
+  switching: "Switching camera...",
 };
 
 /**
@@ -44,6 +58,11 @@ function setState(state) {
   statusEl.dataset.state = state;
   startBtn.disabled = state !== "stopped";
   stopBtn.disabled = state === "stopped" || state === "stopping";
+  cameraSelect.disabled = state === "switching" || state === "stopping";
+  // The output is fixed while running, only the preview rate can change.
+  for (const select of [setResolution, setFps, setBitrate]) {
+    select.disabled = state !== "stopped";
+  }
 }
 
 /**
@@ -64,6 +83,94 @@ function showOrientation(next) {
   orientation = next;
   turnEl.textContent = `${next.rotation}°${next.mirror ? ", mirrored" : ""}`;
   mirrorBtn.setAttribute("aria-pressed", String(next.mirror));
+}
+
+/**
+ * @param {StreamSettings} settings
+ */
+function showSettings(settings) {
+  setResolution.value = settings.resolution;
+  setFps.value = String(settings.fps);
+  setBitrate.value = String(settings.bitrate);
+  setPreviewFps.value = String(settings.preview_fps);
+}
+
+function saveSettings() {
+  window.pywebview.api.set_settings({
+    resolution: setResolution.value,
+    fps: Number(setFps.value),
+    bitrate: Number(setBitrate.value),
+    preview_fps: Number(setPreviewFps.value),
+  });
+}
+
+/** @type {Record<Exclude<PhoneState, "ready">, [string, string]>} */
+const PHONE_NOTICES = {
+  missing: [
+    "No phone connected",
+    "Connect your phone with a USB cable and turn on USB debugging.",
+  ],
+  unauthorised: [
+    "Approve USB debugging",
+    "Look at your phone and tap Allow on the USB debugging request.",
+  ],
+  offline: [
+    "The phone is not responding",
+    "Unplug the phone and plug it in again.",
+  ],
+  unavailable: [
+    "adb could not be run",
+    "Check that Android platform tools (adb) are installed.",
+  ],
+};
+
+/** @type {PhoneState | null} */
+let phoneState = null;
+
+/**
+ * Cover the app until a phone is ready, and load its cameras once it is.
+ * There is no way to dismiss this, it goes when the phone is usable.
+ * @param {PhoneState} state
+ */
+function showPhone(state) {
+  const wasReady = phoneState === "ready";
+  phoneState = state;
+  const ready = state === "ready";
+  phoneOverlay.hidden = ready;
+  appMain.inert = !ready;
+  if (!ready) {
+    [phoneTitle.textContent, phoneText.textContent] = PHONE_NOTICES[state];
+  } else if (!wasReady) {
+    loadCameras();
+  }
+}
+
+/**
+ * Fill the camera list, keeping the default first and the choice selected.
+ * @param {CameraInfo[]} cameras
+ * @param {string} chosen
+ */
+function showCameras(cameras, chosen) {
+  const options = cameras.map((camera) => {
+    const option = document.createElement("option");
+    option.value = camera.id;
+    option.textContent = camera.label;
+    return option;
+  });
+  const fallback = cameraSelect.options[0];
+  cameraSelect.replaceChildren(fallback, ...options);
+  cameraSelect.value = chosen;
+}
+
+async function loadCameras() {
+  camerasRefresh.disabled = true;
+  try {
+    const cameras = await window.pywebview.api.list_cameras();
+    showCameras(cameras, await window.pywebview.api.get_camera());
+    if (cameras.length === 0) addLog("No cameras found, is the phone connected?");
+  } finally {
+    camerasRefresh.disabled = false;
+  }
 }
 
 /**
@@ -126,6 +233,15 @@ window.onWebcamEvent = (event) => {
     case "preview":
       showPreview(event.state, event.url);
       break;
+    case "phone":
+      showPhone(event.state);
+      break;
+    case "camera":
+      cameraSelect.value = event.id;
+      break;
+    case "settings":
+      showSettings(event);
+      break;
     case "confirm":
       confirmMessage.textContent = event.message;
       confirmDialog.showModal();
@@ -135,6 +251,13 @@ window.onWebcamEvent = (event) => {
 
 startBtn.addEventListener("click", () => window.pywebview.api.start());
 stopBtn.addEventListener("click", () => window.pywebview.api.stop());
+cameraSelect.addEventListener("change", () =>
+  window.pywebview.api.set_camera(cameraSelect.value),
+);
+camerasRefresh.addEventListener("click", loadCameras);
+for (const select of [setResolution, setFps, setBitrate, setPreviewFps]) {
+  select.addEventListener("change", saveSettings);
+}
 rotateLeft.addEventListener("click", () => turn(-1));
 rotateRight.addEventListener("click", () => turn(1));
 mirrorBtn.addEventListener("click", () =>
@@ -165,4 +288,6 @@ confirmDialog.addEventListener("cancel", () => answer(false));
 window.addEventListener("pywebviewready", async () => {
   setState(await window.pywebview.api.get_state());
   showOrientation(await window.pywebview.api.get_orientation());
+  showSettings(await window.pywebview.api.get_settings());
+  showPhone(await window.pywebview.api.get_phone());
 });
