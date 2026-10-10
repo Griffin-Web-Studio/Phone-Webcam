@@ -394,3 +394,37 @@ def test_ffmpeg_blocks_but_the_loopback_ctl_does_not(monkeypatch):
     by_key = {r.key: r for r in deps.run_system_checks()}
     assert by_key["ffmpeg"].blocking
     assert not by_key["v4l2loopback_ctl"].blocking
+
+
+# ──────────────────────────────────────────────────────────| Compiled builds |──
+def test_qt_root_finds_the_tree_beside_compiled_modules(tmp_path, monkeypatch):
+    import importlib.util
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    (tmp_path / "PyQt6" / "Qt6").mkdir(parents=True)
+    anchor = tmp_path / "phone_webcam" / "deps.py"
+    assert deps._qt_root(anchor) == tmp_path / "PyQt6" / "Qt6"
+
+
+def test_qt_root_is_none_without_any_bundle(tmp_path, monkeypatch):
+    import importlib.util
+
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+    assert deps._qt_root(tmp_path / "phone_webcam" / "deps.py") is None
+
+
+def test_qt_lib_prefers_the_wheel_layout(tmp_path):
+    root = tmp_path / "PyQt6" / "Qt6"
+    (root / "lib").mkdir(parents=True)
+    (root / "lib" / "libQt6Gui.so.6").touch()
+    (tmp_path / "libQt6Gui.so.6").touch()
+    assert (
+        deps._qt_lib(root, "libQt6Gui.so.6") == root / "lib" / "libQt6Gui.so.6"
+    )
+
+
+def test_qt_lib_falls_back_to_the_top_folder_of_a_compiled_app(tmp_path):
+    root = tmp_path / "PyQt6" / "Qt6"
+    root.mkdir(parents=True)
+    (tmp_path / "libQt6Gui.so.6").touch()
+    assert deps._qt_lib(root, "libQt6Gui.so.6") == tmp_path / "libQt6Gui.so.6"

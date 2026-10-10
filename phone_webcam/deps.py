@@ -172,15 +172,32 @@ def _ldd_missing(path: Path) -> set[str] | None:
     }
 
 
-def _qt_root() -> Path | None:
-    """Locate the bundled Qt tree without importing PyQt6."""
+def _qt_root(anchor: Path = Path(__file__)) -> Path | None:
+    """Locate the bundled Qt tree without importing PyQt6.
+
+    In a Nuitka build the import system has no spec for PyQt6, but the tree
+    sits next to the compiled modules, one folder above this one.
+    """
     try:
         spec = importlib.util.find_spec("PyQt6")
     except ImportError, ValueError:
-        return None
-    if spec is None or not spec.submodule_search_locations:
-        return None
-    return Path(next(iter(spec.submodule_search_locations))) / "Qt6"
+        spec = None
+    if spec is not None and spec.submodule_search_locations:
+        return Path(next(iter(spec.submodule_search_locations))) / "Qt6"
+    bundled = anchor.resolve().parent.parent / "PyQt6" / "Qt6"
+    return bundled if bundled.is_dir() else None
+
+
+def _qt_lib(root: Path, name: str) -> Path:
+    """Find a Qt library, in the wheel's lib folder or beside a compiled app.
+
+    A compiled build keeps its shared libraries in the top folder, which is
+    two levels above the Qt tree (PyQt6/Qt6).
+    """
+    for folder in (root / "lib", root.parent.parent):
+        if (folder / name).exists():
+            return folder / name
+    return root / "lib" / name
 
 
 # ──────────────────────────────────────────────────────| Distribution hints |──
@@ -291,7 +308,7 @@ def check_qt_libs(env: Mapping[str, str] | None = None) -> CheckResult:
 
     missing: set[str] = set()
     for lib in QT_CORE_LIBS:
-        found = _ldd_missing(root / "lib" / lib)
+        found = _ldd_missing(_qt_lib(root, lib))
         if found is None:
             return CheckResult("qt_libs", label, True, detail="not verified")
         missing |= found
