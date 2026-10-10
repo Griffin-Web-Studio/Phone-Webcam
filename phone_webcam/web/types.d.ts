@@ -28,6 +28,18 @@ export interface StreamSettings {
   preview_fps: number;
 }
 
+export interface CoverSettings {
+  title: string;
+  subtitle: string;
+  svg: string;
+  notices: boolean;
+  mirror: boolean;
+}
+
+export type ChooseResult =
+  | { ok: true; message: string; cover: CoverSettings }
+  | { ok: false; message: string };
+
 export type PhoneState =
   | "ready"
   | "unauthorised"
@@ -54,12 +66,19 @@ export type WebcamEvent =
   | PreviewEvent
   | { type: "camera"; id: string }
   | ({ type: "settings" } & StreamSettings)
+  | { type: "shutter"; on: boolean }
+  | ({ type: "cover" } & CoverSettings)
   | { type: "phone"; state: PhoneState; serial: string }
   | { type: "confirm"; message: string };
 
 export interface Api {
   get_report(): Promise<Report>;
   enter_app(): Promise<void>;
+  get_shutter(): Promise<boolean>;
+  set_shutter(on: boolean): Promise<void>;
+  get_cover(): Promise<CoverSettings>;
+  set_cover(cover: Partial<CoverSettings>): Promise<CoverSettings>;
+  choose_cover_svg(): Promise<ChooseResult>;
   get_side_width(): Promise<number>;
   set_side_width(width: number): Promise<void>;
   get_state(): Promise<string>;

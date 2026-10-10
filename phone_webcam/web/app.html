@@ -22,6 +22,12 @@
         <section class="session" aria-label="Webcam">
           <p id="status" class="status" data-state="stopped">Stopped</p>
           <button id="toggle" type="button" class="primary">Start</button>
+          <button id="shutter" type="button" aria-pressed="false">
+            Cover camera
+          </button>
+          <p id="shutter-note" class="note muted" hidden>
+            Apps see the cover. The phone's camera is still running.
+          </p>
         </section>
 
         <div class="accordion">
@@ -59,6 +65,38 @@
                 <button id="reset" type="button">Reset</button>
               </div>
               <output id="turn" class="muted">0°</output>
+            </div>
+          </details>
+
+          <details>
+            <summary>Cover image</summary>
+            <div class="fold">
+              <div class="settings-grid">
+                <label for="cover-title">Title</label>
+                <input id="cover-title" type="text" maxlength="32" />
+                <label for="cover-subtitle">Subtitle</label>
+                <input id="cover-subtitle" type="text" maxlength="64" />
+                <span>Image</span>
+                <span id="cover-svg" class="muted">Built-in image</span>
+              </div>
+              <div class="row">
+                <button id="cover-choose" type="button">Choose SVG...</button>
+                <button id="cover-default" type="button">Use built-in</button>
+              </div>
+              <p id="cover-message" class="note" role="status" hidden></p>
+              <label class="check">
+                <input id="cover-notices" type="checkbox" />
+                Show a notice while the camera starts or switches
+              </label>
+              <label class="check">
+                <input id="cover-mirror" type="checkbox" />
+                Mirror the cover with the picture
+              </label>
+              <p class="muted note">
+                The cover is an SVG, so you can make your own. Use
+                {{title}} and {{subtitle}} where the text should go, and make
+                it 1920x1080.
+              </p>
             </div>
           </details>
 

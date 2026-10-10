@@ -388,8 +388,30 @@ body.app {
   min-width: 0;
 }
 
-.settings-grid select {
+.settings-grid select,
+.settings-grid input[type="text"] {
   width: 100%;
+}
+
+input[type="text"] {
+  padding: 7px 10px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 14px;
+}
+
+.check input {
+  margin-top: 4px;
+  accent-color: var(--primary);
 }
 
 .note {

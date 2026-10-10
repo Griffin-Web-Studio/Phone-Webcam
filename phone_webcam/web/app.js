@@ -7,6 +7,7 @@
 /** @typedef {import("./types").CameraInfo} CameraInfo */
 /** @typedef {import("./types").PhoneState} PhoneState */
 /** @typedef {import("./types").StreamSettings} StreamSettings */
+/** @typedef {import("./types").CoverSettings} CoverSettings */
 
 const statusEl = byId("status", HTMLElement);
 const toggleBtn = byId("toggle", HTMLButtonElement);
@@ -27,6 +28,16 @@ const setResolution = byId("set-resolution", HTMLSelectElement);
 const setFps = byId("set-fps", HTMLSelectElement);
 const setBitrate = byId("set-bitrate", HTMLSelectElement);
 const setPreviewFps = byId("set-preview-fps", HTMLSelectElement);
+const shutterBtn = byId("shutter", HTMLButtonElement);
+const shutterNote = byId("shutter-note", HTMLElement);
+const coverTitle = byId("cover-title", HTMLInputElement);
+const coverSubtitle = byId("cover-subtitle", HTMLInputElement);
+const coverSvg = byId("cover-svg", HTMLElement);
+const coverChoose = byId("cover-choose", HTMLButtonElement);
+const coverDefault = byId("cover-default", HTMLButtonElement);
+const coverMessage = byId("cover-message", HTMLElement);
+const coverNotices = byId("cover-notices", HTMLInputElement);
+const coverMirror = byId("cover-mirror", HTMLInputElement);
 const appMain = byId("app", HTMLElement);
 const phoneOverlay = byId("phone", HTMLElement);
 const phoneTitle = byId("phone-title", HTMLElement);
@@ -118,6 +129,48 @@ function saveSettings() {
     bitrate: Number(setBitrate.value),
     preview_fps: Number(setPreviewFps.value),
   });
+}
+
+/**
+ * @param {boolean} on
+ */
+function showShutter(on) {
+  shutterBtn.setAttribute("aria-pressed", String(on));
+  shutterBtn.textContent = on ? "Uncover camera" : "Cover camera";
+  shutterNote.hidden = !on;
+}
+
+/**
+ * @param {CoverSettings} cover
+ */
+function showCover(cover) {
+  coverTitle.value = cover.title;
+  coverSubtitle.value = cover.subtitle;
+  coverNotices.checked = cover.notices;
+  coverMirror.checked = cover.mirror;
+  // Only the file's name, the full path is no use in a narrow panel.
+  coverSvg.textContent = cover.svg
+    ? (cover.svg.split("/").pop() ?? cover.svg)
+    : "Built-in image";
+  coverSvg.title = cover.svg;
+}
+
+function saveCover() {
+  window.pywebview.api.set_cover({
+    title: coverTitle.value,
+    subtitle: coverSubtitle.value,
+    notices: coverNotices.checked,
+    mirror: coverMirror.checked,
+  });
+}
+
+/**
+ * Say why an image was not used, or clear the message.
+ * @param {string} message
+ */
+function showCoverMessage(message) {
+  coverMessage.textContent = message;
+  coverMessage.hidden = message === "";
 }
 
 /** @type {Record<Exclude<PhoneState, "ready">, [string, string]>} */
@@ -280,6 +333,12 @@ window.onWebcamEvent = (event) => {
     case "settings":
       showSettings(event);
       break;
+    case "shutter":
+      showShutter(event.on);
+      break;
+    case "cover":
+      showCover(event);
+      break;
     case "confirm":
       confirmMessage.textContent = event.message;
       confirmDialog.showModal();
@@ -296,6 +355,22 @@ cameraSelect.addEventListener("change", () =>
   window.pywebview.api.set_camera(cameraSelect.value),
 );
 camerasRefresh.addEventListener("click", loadCameras);
+shutterBtn.addEventListener("click", () =>
+  window.pywebview.api.set_shutter(
+    shutterBtn.getAttribute("aria-pressed") !== "true",
+  ),
+);
+for (const input of [coverTitle, coverSubtitle, coverNotices, coverMirror]) {
+  input.addEventListener("change", saveCover);
+}
+coverChoose.addEventListener("click", async () => {
+  const result = await window.pywebview.api.choose_cover_svg();
+  showCoverMessage(result.ok ? "" : result.message);
+});
+coverDefault.addEventListener("click", () => {
+  showCoverMessage("");
+  window.pywebview.api.set_cover({ svg: "" });
+});
 for (const select of [setResolution, setFps, setBitrate, setPreviewFps]) {
   select.addEventListener("change", saveSettings);
 }
@@ -392,6 +467,8 @@ window.addEventListener("pywebviewready", async () => {
   setState(await window.pywebview.api.get_state());
   showOrientation(await window.pywebview.api.get_orientation());
   showSettings(await window.pywebview.api.get_settings());
+  showCover(await window.pywebview.api.get_cover());
+  showShutter(await window.pywebview.api.get_shutter());
   const side = await window.pywebview.api.get_side_width();
   if (side > 0) setSideWidth(side);
   showPhone(await window.pywebview.api.get_phone());
