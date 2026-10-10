@@ -200,36 +200,15 @@ def test_only_test_commits_skip_the_build(main, message, builds):
     assert any(p.search(message) for p in skipping) != builds
 
 
-def tag_pipeline_runs(main, tag):
-    """Whether the workflow lets a pipeline start for this tag (first match wins)."""
-    for rule in main["workflow"]["rules"]:
-        condition = rule.get("if", "")
-        if (
-            "$CI_COMMIT_TAG" not in condition
-            or "=~" in condition
-            and "MESSAGE" in condition
-        ):
-            continue
-        if (
-            condition == "$CI_COMMIT_TAG"
-            or f'$CI_COMMIT_TAG == "{tag}"' in condition
-        ):
-            return rule.get("when") != "never"
-    return False
-
-
-def test_the_nightly_tag_never_starts_a_pipeline_of_its_own(main):
-    """Making the tag would otherwise build everything a second time."""
-    assert not tag_pipeline_runs(main, "nightly")
-
-
-@pytest.mark.parametrize("tag", ["v1.0.0", "v1.0.0-rc.0", "v0.3.2"])
-def test_version_tags_still_start_a_pipeline(main, tag):
-    assert tag_pipeline_runs(main, tag)
-
-
-def test_a_nightly_tag_would_not_match_the_stable_release_rule(main):
-    assert not re.search(r"^v\d+\.\d+\.\d+", "nightly")
+def test_every_tag_starts_a_pipeline(main):
+    """Version tags are what releases come from, so no rule may turn a tag away."""
+    tag_rules = [
+        rule
+        for rule in main["workflow"]["rules"]
+        if "$CI_COMMIT_TAG" in rule.get("if", "")
+        and "MESSAGE" not in rule["if"]
+    ]
+    assert tag_rules == [{"if": "$CI_COMMIT_TAG"}]
 
 
 def test_the_workflow_runs_tags_schedules_main_and_merge_requests(main):
@@ -332,16 +311,8 @@ def test_normal_jobs_stay_out_of_scheduled_pipelines(main):
 
 
 def test_the_nightly_child_has_the_whole_chain(nightly):
-    assert nightly["stages"] == ["test", "build", "publish", "release"]
-    wanted = {
-        "test",
-        "build:nightly",
-        "publish:nightly",
-        "release:nightly:clean",
-        "release:nightly",
-        "record:nightly-sha",
-    }
-    assert wanted <= set(jobs(nightly))
+    assert nightly["stages"] == ["test", "build", "publish"]
+    assert {"test", "build:nightly", "publish:nightly"} <= set(jobs(nightly))
     assert nightly["build:nightly"]["needs"] == ["test"]
     assert nightly["publish:nightly"]["needs"] == ["build:nightly"]
 
@@ -355,69 +326,24 @@ def test_the_nightly_build_suffixes_the_version_and_numbers_the_binary(nightly):
     )
 
 
-def test_the_nightly_publish_only_publishes(nightly):
-    publish = nightly["publish:nightly"]
-    assert publish["extends"] == ".publish"
-    assert publish["variables"]["PACKAGE_VERSION"] == "nightly"
-    assert "script" not in publish  # it must not record the commit any more
-
-
-def test_the_commit_is_recorded_last_so_a_failed_release_is_retried(nightly):
-    record = nightly["record:nightly-sha"]
-    assert record["needs"] == ["release:nightly"]
-    assert "nightly-sha.txt" in record["script"][0]
-    for name in ("publish:nightly", "release:nightly", "release:nightly:clean"):
-        assert "nightly-sha.txt" not in str(nightly[name].get("script", ""))
-
-
-def test_nightly_releases_run_in_order_clean_then_create_then_record(nightly):
-    assert nightly["release:nightly:clean"]["needs"] == ["publish:nightly"]
-    assert nightly["release:nightly"]["needs"] == ["release:nightly:clean"]
-    for name in (
-        "release:nightly:clean",
-        "release:nightly",
-        "record:nightly-sha",
-    ):
-        assert nightly[name]["stage"] == "release"
-        assert nightly[name]["interruptible"] is False
-
-
-def test_the_nightly_release_is_one_rolling_release_on_a_fixed_tag(nightly):
-    release = nightly["release:nightly"]["release"]
-    assert nightly["variables"]["NIGHTLY_TAG"] == "nightly"
-    assert release["tag_name"] == "$NIGHTLY_TAG"
-    assert release["ref"] == "$CI_COMMIT_SHA"  # the tag is made at this commit
-    assert "$CI_COMMIT_SHORT_SHA" in release["name"]
-
-
-def test_the_nightly_release_links_what_the_nightly_publish_uploads(nightly):
-    uploaded = nightly[".publish"]["script"][0]
-    links = nightly["release:nightly"]["release"]["assets"]["links"]
-    names = [link["url"].rsplit("/", 1)[1] for link in links]
-    assert sorted(names) == sorted(PUBLISHED)
-    for name in PUBLISHED:
-        assert name in uploaded
-    for link in links:
-        assert "/$NIGHTLY_TAG/" in link["url"]  # the package version is the tag
-
-
-def test_the_old_release_and_tag_are_deleted_in_that_order_tolerating_404(
-    nightly,
-):
-    script = nightly["release:nightly:clean"]["script"][0]
-    assert script.index("releases/$NIGHTLY_TAG") < script.index(
-        "repository/tags/$NIGHTLY_TAG"
+def test_the_nightly_publish_records_the_commit_it_built(nightly):
+    steps = nightly["publish:nightly"]["script"]
+    assert steps[0] == {"reference": [".publish", "script"]}
+    assert "nightly-sha.txt" in steps[1]
+    assert (
+        nightly["publish:nightly"]["variables"]["PACKAGE_VERSION"] == "nightly"
     )
-    assert "404" in script  # nothing to delete on the first run is fine
-    assert "RELEASE_TOKEN" in script  # and a token can replace the job token
-    assert "exit 1" in script  # anything else is an error, not a silent skip
 
 
-def test_the_release_job_does_not_need_git_history(nightly):
-    """It runs in the release-cli image, so its notes may only use CI variables."""
-    script = nightly["release:nightly"]["script"][0]
-    assert "git " not in script
-    assert "$CI_COMMIT_SHA" in script and "$CI_PIPELINE_URL" in script
+def test_a_nightly_makes_no_release_so_it_needs_no_token_to_delete_one(
+    main, nightly
+):
+    """Project access tokens are a paid feature, so there is no nightly release."""
+    for config in (main, nightly):
+        for name in jobs(config):
+            assert "nightly" not in name or "release" not in name, name
+        assert "RELEASE_TOKEN" not in str(config)
+    assert "release" not in nightly["stages"]
 
 
 def test_the_gate_and_the_child_agree_on_the_package_name(main, nightly):
@@ -428,93 +354,3 @@ def test_the_gate_and_the_child_agree_on_the_package_name(main, nightly):
 def test_the_pipeline_passes_the_number_before_the_hash(nightly):
     steps = " ".join(str(s) for s in nightly["build:nightly"]["before_script"])
     assert '"$CI_PIPELINE_IID.$CI_COMMIT_SHORT_SHA"' in steps
-
-
-# ─────────────────────────────────────────────────────| The clean job, running |──
-@pytest.fixture
-def clean(nightly, tmp_path):
-    """Runs the clean job's real shell script, with a curl that answers as told.
-
-    The fake curl takes its answers from FAKE_CODES, one status for each call, and
-    writes a body like GitLab's. It stands first on the PATH, so the script that
-    runs is exactly the one in the pipeline file.
-    """
-    shim = tmp_path / "curl"
-    shim.write_text("""#!/bin/sh
-dir=$(dirname "$0")
-n=$(cat "$dir/n" 2>/dev/null || echo 0)
-n=$((n+1))
-echo $n > "$dir/n"
-code=$(echo "$FAKE_CODES" | cut -d, -f$n)
-out=
-while [ $# -gt 0 ]; do
-  [ "$1" = "--output" ] && out="$2"
-  shift
-done
-echo '{"message":"403 Forbidden"}' > "$out"
-printf '%s' "$code"
-""")
-    shim.chmod(0o755)
-    script = nightly["release:nightly:clean"]["script"][0]
-    import os
-    import subprocess
-
-    def run(codes, **extra):
-        (tmp_path / "n").unlink(missing_ok=True)
-        env = {
-            "PATH": f"{tmp_path}:{os.environ['PATH']}",
-            "CI_API_V4_URL": "https://gitlab.example/api/v4",
-            "CI_PROJECT_ID": "1",
-            "CI_JOB_TOKEN": "the-job-token",
-            "NIGHTLY_TAG": "nightly",
-            "FAKE_CODES": codes,
-            **extra,
-        }
-        done = subprocess.run(
-            ["sh", "-c", script], capture_output=True, text=True, env=env
-        )
-        return done.returncode, done.stdout + done.stderr
-
-    return run
-
-
-@pytest.mark.parametrize(
-    "codes",
-    ["404,404", "200,204", "200,404", "404,204"],
-    ids=[
-        "first run",
-        "a normal night",
-        "tag already gone",
-        "release already gone",
-    ],
-)
-def test_the_clean_job_succeeds_when_what_it_deletes_is_deleted_or_absent(
-    clean, codes
-):
-    code, output = clean(codes)
-    assert code == 0, output
-    assert "releases/nightly" in output and "repository/tags/nightly" in output
-
-
-def test_the_clean_job_says_when_the_job_token_is_refused(clean):
-    code, output = clean("403,403")
-    assert code != 0
-    assert "HTTP 403" in output
-    assert "RELEASE_TOKEN is not set" in output  # which credential was used
-    assert "403 Forbidden" in output  # and what GitLab itself said
-    assert "api scope" in output  # and what to do about it
-
-
-def test_the_clean_job_says_when_the_release_token_is_refused_and_never_prints_it(
-    clean,
-):
-    code, output = clean("403,403", RELEASE_TOKEN="glpat-very-secret")
-    assert code != 0
-    assert "using the RELEASE_TOKEN variable" in output
-    assert "glpat-very-secret" not in output
-
-
-def test_a_failed_delete_stops_before_the_tag_is_touched(clean):
-    code, output = clean("500,204")
-    assert code != 0
-    assert "repository/tags" not in output.split("ERROR")[0]

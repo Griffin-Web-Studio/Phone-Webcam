@@ -42,11 +42,9 @@
 #     -> trigger:nightly  runs generated-nightly.yml as a child pipeline
 #                          (strategy: depend, so this job's own status
 #                          mirrors it). On an unchanged main that's just the
-#                          no-op job, so the whole test/build/publish/release
-#                          suite is skipped - not failed. See
-#                          .gitlab/ci/nightly.yml for the real nightly chain,
-#                          which ends in one rolling GitLab Release on the
-#                          fixed "nightly" tag.
+#                          no-op job, so the whole test/build/publish suite
+#                          is skipped - not failed. See .gitlab/ci/nightly.yml
+#                          for the real nightly chain.
 #
 #
 # COMMIT TYPE FILTER
@@ -80,9 +78,9 @@
 #
 #   Go to CI/CD > Schedules in GitLab and create a schedule targeting the main
 #   branch (e.g. daily at 03:00 UTC).  Each run overwrites the single "nightly"
-#   package entry and replaces the single "nightly" release, so the download
-#   URLs and the release page stay stable. Deleting the old release and tag may
-#   need a RELEASE_TOKEN, see .gitlab/ci/nightly.yml.
+#   package entry so the download URL stays stable. There is no GitLab Release
+#   for a nightly, a rolling one needs to delete the last one, which needs a
+#   project access token, and those are a paid feature.
 #
 #   Nightly download URLs (once a schedule has run):
 #   - $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/phone-webcam/nightly/phone-webcam
@@ -103,11 +101,7 @@
 #
 #   MAINTAINER (optional CI/CD variable) is the "Name <email>" written into the
 #   packages. Without it, the person who started the pipeline is used.
-#
-#   RELEASE_TOKEN (optional CI/CD variable) is a project access token with the
-#   api scope, used by the nightly pipeline to delete last night's release and
-#   tag if the job token is not allowed to. The "nightly" tag must not be
-#   protected.
+
 
 # ──────────────────────────────────────────────────────────| Workflow Setup |──
 #
@@ -125,11 +119,6 @@ workflow:
   rules:
       # nightly always runs
     - if: $CI_PIPELINE_SOURCE == "schedule"
-
-      # the rolling nightly tag is made by the nightly pipeline itself, and a
-      # pipeline for it would build everything a second time
-    - if: $CI_COMMIT_TAG == "nightly"
-      when: never
 
       # release tags always run
     - if: $CI_COMMIT_TAG
