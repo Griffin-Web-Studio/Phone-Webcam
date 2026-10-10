@@ -1,6 +1,6 @@
 [project]
 name = "phone-webcam"
-version = "0.0.0"
+version = "1.0.0"
 description = "Use an Android phone's camera as a webcam"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -48,7 +48,7 @@ exclude = '''
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.0.0"
+version = "1.0.0"
 version_scheme = "semver2"
 tag_format = "v$version"
 update_changelog_on_bump = true
