@@ -3,6 +3,9 @@ repos:
   rev: v6.0.0
   hooks:
   - id: check-yaml
+    # GitLab's !reference tag is not plain YAML. This only skips the check that
+    # every tag is a known type, a syntax error is still caught.
+    args: [--unsafe]
   - id: end-of-file-fixer
   - id: trailing-whitespace
 
