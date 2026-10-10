@@ -4,9 +4,9 @@ All the slow work (pkexec, adb, scrcpy, ffmpeg) happens on worker threads, and
 progress leaves through `emit`, so the UI never blocks and nothing touches the
 UI from the wrong thread.
 
-scrcpy writes into a hidden loopback device and a pipeline copies it, turned
-as asked, into the device other apps open. Turning therefore works live,
-without restarting scrcpy or interrupting the output.
+scrcpy records into a FIFO and a pipeline decodes it, turns it as asked and
+writes it into the one loopback device other apps open. Turning therefore works
+live, without restarting scrcpy or interrupting the output.
 """
 
 import os
@@ -14,16 +14,22 @@ import pty
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 from phone_webcam import deps, loopback, pipeline
+from phone_webcam.preview import Preview
 
 # ──────────────────────────────────────────────────────────────────| Config |──
 CAMERA_SIZE = f"{pipeline.WIDTH}x{pipeline.HEIGHT}"
-STARTED_MARKER = "v4l2 sink started"
+# A keyframe every second, with its parameter sets, so the decoder can start
+# within moments. Without it the first picture can take twenty seconds.
+CODEC_OPTIONS = "i-frame-interval=1,prepend-sps-pps-to-idr-frames=1"
 SIGTERM_EXIT = -15
 CONFIRM_TIMEOUT = 300
+PREVIEW_TIMEOUT = 8
 
 STOPPED = "stopped"
 STARTING = "starting"
@@ -34,16 +40,30 @@ Emit = Callable[[dict], None]
 
 
 # ─────────────────────────────────────────────────────────────────| Helpers |──
-def scrcpy_args(device: str) -> list[str]:
-    """The scrcpy command line that turns the phone camera into a webcam."""
+def scrcpy_args(fifo: str) -> list[str]:
+    """The scrcpy command line that records the phone camera into a FIFO."""
     return [
         "scrcpy",
-        f"--v4l2-sink={device}",
         "--no-window",
+        "--no-audio",
         "--video-source=camera",
         f"--camera-size={CAMERA_SIZE}",
-        "--no-audio",
+        f"--record={fifo}",
+        "--record-format=mkv",
+        f"--video-codec-options={CODEC_OPTIONS}",
     ]
+
+
+def make_fifo() -> Path:
+    """Create a private FIFO, in the runtime directory when there is one."""
+    folder = Path(
+        tempfile.mkdtemp(
+            prefix="phone-webcam-", dir=os.environ.get("XDG_RUNTIME_DIR")
+        )
+    )
+    fifo = folder / "camera.mkv"
+    os.mkfifo(fifo, 0o600)
+    return fifo
 
 
 # Terminal control sequences: title changes (OSC) and cursor or erase codes.
@@ -96,8 +116,8 @@ class Webcam:
         self._lock = threading.Lock()
         self._process: subprocess.Popen[str] | None = None
         self._pipeline: pipeline.Pipeline | None = None
-        self._preview: subprocess.Popen[bytes] | None = None
-        self._output: str | None = None
+        self._preview: Preview | None = None
+        self._preview_busy = False
         self._stop_requested = False
         self._answer = False
         self._answered = threading.Event()
@@ -125,6 +145,8 @@ class Webcam:
                 return
             self._stop_requested = True
             self._set_state(STOPPING)
+            if self._pipeline is not None:
+                self._pipeline.quiet()
             if self._process is not None:
                 self._process.terminate()
         self.answer(False)
@@ -155,30 +177,12 @@ class Webcam:
         self._answered.set()
 
     def toggle_preview(self) -> None:
-        """Open or close an ffplay window showing the output device."""
+        """Open or close the live preview, ignored while one is changing."""
         with self._lock:
-            if self._preview is not None:
-                self._preview.terminate()
+            if self._preview_busy:
                 return
-            output = self._output
-        if output is None:
-            self._log("Start the webcam first, there is nothing to preview.")
-            return
-        ffplay = shutil.which("ffplay")
-        if ffplay is None:
-            self._log("ffplay is not installed, install ffmpeg to preview.")
-            return
-        preview = subprocess.Popen(
-            [
-                ffplay,
-                *("-loglevel", "error", "-fflags", "nobuffer"),
-                *("-window_title", "Preview", output),
-            ],
-        )
-        with self._lock:
-            self._preview = preview
-        self._emit({"type": "preview", "open": True})
-        threading.Thread(target=self._watch_preview, daemon=True).start()
+            self._preview_busy = True
+        threading.Thread(target=self._toggle_preview, daemon=True).start()
 
     # ──────────────────────────────────────────────────────────────| Worker |──
     def _set_state(self, state: str) -> None:
@@ -188,25 +192,65 @@ class Webcam:
     def _log(self, line: str) -> None:
         self._emit({"type": "log", "line": line})
 
-    def _watch_preview(self) -> None:
-        preview = self._preview
+    def _toggle_preview(self) -> None:
+        try:
+            if self._preview is not None:
+                self._emit_preview("stopping")
+                self._stop_preview()
+            else:
+                self._start_preview()
+        finally:
+            self._preview_busy = False
+
+    def _emit_preview(self, state: str, url: str | None = None) -> None:
+        self._emit({"type": "preview", "state": state, "url": url})
+
+    def _start_preview(self) -> None:
+        live = self._pipeline
+        if live is None or self.state != RUNNING:
+            self._log("Start the webcam first, there is nothing to preview.")
+            return
+        self._emit_preview("starting")
+        preview = Preview(pipeline.WIDTH, pipeline.HEIGHT)
+        try:
+            url = preview.start()
+        except OSError as exc:
+            self._log(f"Could not start the preview: {exc}")
+            self._emit_preview("closed")
+            return
+        self._preview = preview
+        live.set_preview(preview)
+        if not preview.wait_for_first_frame(PREVIEW_TIMEOUT):
+            self._log("The preview did not produce a picture in time.")
+            self._stop_preview()
+            return
+        self._emit_preview("open", url)
+
+    def _stop_preview(self) -> None:
+        preview, self._preview = self._preview, None
+        live = self._pipeline
+        if live is not None:
+            live.set_preview(None)
         if preview is not None:
-            preview.wait()
+            preview.stop()
+        self._emit_preview("closed")
+
+    def _on_first_frame(self) -> None:
+        """The first picture has arrived, so the webcam is really running."""
         with self._lock:
-            self._preview = None
-        self._emit({"type": "preview", "open": False})
+            if self.state == STARTING:
+                self._set_state(RUNNING)
 
     def _finish(self) -> None:
+        with self._lock:
+            if self._process is not None and self._process.poll() is None:
+                self._process.terminate()
+        self._stop_preview()
         live, self._pipeline = self._pipeline, None
         if live is not None:
             live.stop()
         with self._lock:
-            if self._process is not None and self._process.poll() is None:
-                self._process.terminate()
             self._process = None
-            self._output = None
-            if self._preview is not None:
-                self._preview.terminate()
             self._set_state(STOPPED)
 
     def _confirm(self, message: str) -> bool:
@@ -219,9 +263,9 @@ class Webcam:
 
     def _run(self) -> None:
         try:
-            devices = self._prepare()
-            if devices is not None and not self._stop_requested:
-                self._stream(*devices)
+            output = self._prepare()
+            if output is not None and not self._stop_requested:
+                self._stream(output)
         except Exception as exc:  # noqa: BLE001 - report it, never die silently
             self._log(f"Unexpected error: {type(exc).__name__}: {exc}")
         finally:
@@ -240,7 +284,7 @@ class Webcam:
         return True
 
     def _ensure_devices(self) -> bool:
-        """Make sure the source and output loopback devices both exist."""
+        """Make sure the output loopback device exists."""
         missing = loopback.missing_labels()
         if not missing:
             return True
@@ -251,17 +295,17 @@ class Webcam:
                 return False
         else:
             if loopback.has_ctl():
-                self._log("Adding the webcam devices...")
+                self._log("Adding the webcam device...")
                 if self._pkexec(loopback.add_command(missing)):
                     return not loopback.missing_labels()
             if loopback.module_in_use():
                 self._log(
-                    "The webcam devices cannot be set up while another app "
+                    "The webcam device cannot be set up while another app "
                     "uses v4l2loopback. Close it and try again."
                 )
                 return False
             if not self._confirm(
-                "The webcam devices have to be created by reloading "
+                "The webcam device has to be created by reloading "
                 "v4l2loopback. Other virtual cameras, such as OBS's, are "
                 "removed until they are set up again. Reload it now?"
             ):
@@ -271,12 +315,12 @@ class Webcam:
                 return False
 
         if loopback.missing_labels():
-            self._log("The webcam devices were not created.")
+            self._log("The webcam device was not created.")
             return False
         return True
 
-    def _prepare(self) -> tuple[str, str] | None:
-        """Check the phone, set up the devices, find the device nodes."""
+    def _prepare(self) -> str | None:
+        """Check the phone, set up the device, find its node."""
         try:
             proc = subprocess.run(
                 ["adb", "devices"], capture_output=True, text=True, timeout=30
@@ -295,29 +339,28 @@ class Webcam:
 
         if not self._ensure_devices():
             return None
-        source = loopback.find_device(loopback.SOURCE_LABEL)
         output = loopback.find_device(loopback.OUTPUT_LABEL)
-        if source is None or output is None:
-            self._log("The webcam devices could not be found.")
-            return None
-        return source, output
+        if output is None:
+            self._log("The webcam device could not be found.")
+        return output
 
-    def _start_pipeline(self, source: str, output: str) -> None:
-        live = pipeline.Pipeline(source, output, self._log)
+    def _start_pipeline(self, fifo: str, output: str) -> bool:
+        live = pipeline.Pipeline(fifo, output, self._log, self._on_first_frame)
         live.set_orientation(*self._turn)
         try:
             live.start()
         except OSError as exc:
             self._log(f"Could not start ffmpeg: {exc}")
-            return
+            return False
         self._pipeline = live
+        return True
 
     @staticmethod
     def _spawn(args: list[str]) -> tuple[subprocess.Popen, Iterator[str]]:
         """Start a process on a pty and return it with its output lines.
 
-        scrcpy buffers its own messages when writing to a pipe, so the start
-        marker would only arrive on exit. A pty makes it print line by line.
+        scrcpy buffers its own messages when writing to a pipe, so they would
+        only arrive on exit. A pty makes it print line by line.
         """
         master, slave = pty.openpty()
         try:
@@ -335,26 +378,30 @@ class Webcam:
             os.close(slave)
         return process, read_lines(master)
 
-    def _stream(self, source: str, output: str) -> None:
+    def _stream(self, output: str) -> None:
         """Run scrcpy until it exits, forwarding its output."""
-        self._log(f"Starting scrcpy on {source}...")
+        fifo = make_fifo()
         try:
-            process, lines = self._spawn(scrcpy_args(source))
-        except FileNotFoundError:
-            self._log("scrcpy not found. Is it installed and on PATH?")
-            return
-        with self._lock:
-            self._process = process
-            if self._stop_requested:
-                process.terminate()
-        for line in lines:
-            self._log(line)
-            if STARTED_MARKER in line and not self._stop_requested:
-                self._start_pipeline(source, output)
-                with self._lock:
-                    self._output = output
-                    self._set_state(RUNNING)
-        code = process.wait()
-        # A stop we asked for ends with SIGTERM, which is not an error.
-        if code != 0 and not (self._stop_requested and code == SIGTERM_EXIT):
-            self._log(f"scrcpy exited with code {code}")
+            # The reader opens its end first, scrcpy then opens the other.
+            if not self._start_pipeline(str(fifo), output):
+                return
+            self._log(f"Starting scrcpy, the webcam is {output}...")
+            try:
+                process, lines = self._spawn(scrcpy_args(str(fifo)))
+            except FileNotFoundError:
+                self._log("scrcpy not found. Is it installed and on PATH?")
+                return
+            with self._lock:
+                self._process = process
+                if self._stop_requested:
+                    process.terminate()
+            for line in lines:
+                self._log(line)
+            code = process.wait()
+            # A stop we asked for ends with SIGTERM, which is not an error.
+            if code != 0 and not (
+                self._stop_requested and code == SIGTERM_EXIT
+            ):
+                self._log(f"scrcpy exited with code {code}")
+        finally:
+            shutil.rmtree(fifo.parent, ignore_errors=True)
