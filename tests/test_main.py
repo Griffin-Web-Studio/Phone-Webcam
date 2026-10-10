@@ -206,8 +206,48 @@ def test_api_delivers_events_to_the_page_in_order():
     for n in range(50):
         api._push({"type": "log", "line": str(n)})
     for _ in range(100):
-        if len(seen) == 50:
+        if sum('"log"' in js for js in seen) == 50:
             break
         time.sleep(0.01)
-    lines = [json.loads(js.split("(", 1)[1].rstrip(")"))["line"] for js in seen]
+    events = [json.loads(js.split("(", 1)[1].rstrip(")")) for js in seen]
+    lines = [e["line"] for e in events if e["type"] == "log"]
     assert lines == [str(n) for n in range(50)]
+
+
+def test_api_reports_the_phone_to_the_page(monkeypatch):
+    import json
+    import time
+
+    from phone_webcam import phone
+    from phone_webcam.api import Api
+
+    monkeypatch.setattr(
+        phone,
+        "check_phone",
+        lambda *a, **k: phone.Phone(phone.UNAUTHORISED, "x"),
+    )
+    seen = []
+    api = Api()
+    assert api.get_phone() == "unauthorised"
+    api.attach(types.SimpleNamespace(evaluate_js=seen.append))
+    for _ in range(100):
+        if seen:
+            break
+        time.sleep(0.01)
+    api.shutdown()
+    assert seen
+    event = json.loads(seen[0].split("(", 1)[1].rstrip(")"))
+    assert event == {"type": "phone", "state": "unauthorised", "serial": "x"}
+
+
+def test_api_saves_settings_without_losing_the_orientation():
+    from phone_webcam import config
+    from phone_webcam.api import Api
+
+    api = Api()
+    api.set_orientation(90, False)
+    api.set_settings({"fps": 60, "bitrate": 16})
+    saved = config.load_prefs()
+    assert saved["rotation"] == 90
+    assert saved["settings"]["fps"] == 60
+    assert Api().get_settings()["bitrate"] == 16

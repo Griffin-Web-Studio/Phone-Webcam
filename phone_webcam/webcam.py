@@ -17,13 +17,14 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 
-from phone_webcam import deps, loopback, pipeline
+from phone_webcam import cameras, deps, loopback, phone, pipeline
 from phone_webcam.preview import Preview
+from phone_webcam.settings import Settings
 
 # ──────────────────────────────────────────────────────────────────| Config |──
-CAMERA_SIZE = f"{pipeline.WIDTH}x{pipeline.HEIGHT}"
 # A keyframe every second, with its parameter sets, so the decoder can start
 # within moments. Without it the first picture can take twenty seconds.
 CODEC_OPTIONS = "i-frame-interval=1,prepend-sps-pps-to-idr-frames=1"
@@ -35,19 +36,39 @@ STOPPED = "stopped"
 STARTING = "starting"
 RUNNING = "running"
 STOPPING = "stopping"
+SWITCHING = "switching"
 
 Emit = Callable[[dict], None]
 
 
 # ─────────────────────────────────────────────────────────────────| Helpers |──
-def scrcpy_args(fifo: str) -> list[str]:
-    """The scrcpy command line that records the phone camera into a FIFO."""
+def scrcpy_args(
+    fifo: str,
+    camera: cameras.Camera | None = None,
+    settings: Settings = Settings(),
+) -> list[str]:
+    """The scrcpy command line that records a phone camera into a FIFO.
+
+    Without a camera, scrcpy picks its default one. The size and frame rate
+    are the settings, kept within what the chosen camera can do.
+    """
+    selection = [f"--camera-id={camera.id}"] if camera else []
+    limit = settings.size
+    if camera:
+        size = cameras.pick_size(camera.sizes, limit)
+        fps = cameras.pick_fps(camera.fps, settings.fps)
+    else:
+        size = f"{limit[0]}x{limit[1]}"
+        fps = settings.fps
     return [
         "scrcpy",
         "--no-window",
         "--no-audio",
         "--video-source=camera",
-        f"--camera-size={CAMERA_SIZE}",
+        *selection,
+        f"--camera-size={size}",
+        f"--camera-fps={fps}",
+        f"--video-bit-rate={settings.bitrate}M",
         f"--record={fifo}",
         "--record-format=mkv",
         f"--video-codec-options={CODEC_OPTIONS}",
@@ -92,32 +113,30 @@ def read_lines(fd: int) -> Iterator[str]:
             return
 
 
-def parse_adb_devices(output: str) -> tuple[list[str], list[str]]:
-    """Split `adb devices` output into ready and unauthorised serials."""
-    ready: list[str] = []
-    unauthorised: list[str] = []
-    for line in output.splitlines()[1:]:
-        serial, _, status = line.partition("\t")
-        if status.strip() == "device":
-            ready.append(serial)
-        elif status.strip() == "unauthorized":
-            unauthorised.append(serial)
-    return ready, unauthorised
-
-
 # ───────────────────────────────────────────────────────────────| Controller |──
 class Webcam:
     """Starts and stops the webcam, one run at a time."""
 
     def __init__(
-        self, emit: Emit, rotation: int = 0, mirror: bool = False
+        self,
+        emit: Emit,
+        rotation: int = 0,
+        mirror: bool = False,
+        settings: Settings | None = None,
     ) -> None:
         self._emit = emit
+        self._settings = settings or Settings()
         self._lock = threading.Lock()
         self._process: subprocess.Popen[str] | None = None
         self._pipeline: pipeline.Pipeline | None = None
         self._preview: Preview | None = None
         self._preview_busy = False
+        self._cameras: dict[str, cameras.Camera] = {}
+        self._camera_id: str | None = None
+        self._previous_camera: str | None = None
+        self._switching = False
+        self._switched = False
+        self._got_frame = False
         self._stop_requested = False
         self._answer = False
         self._answered = threading.Event()
@@ -176,6 +195,54 @@ class Webcam:
         self._answer = yes
         self._answered.set()
 
+    def settings(self) -> dict:
+        return self._settings.as_dict()
+
+    def set_settings(self, data: dict) -> dict:
+        """Change the stream settings, returning what was applied.
+
+        The output and the camera are fixed while a run is under way, so only
+        the preview rate, which is read each time a preview opens, can change
+        then.
+        """
+        wanted = Settings.from_dict({**self._settings.as_dict(), **data})
+        with self._lock:
+            if self.state == STOPPED:
+                self._settings = wanted
+            else:
+                self._settings = replace(
+                    self._settings, preview_fps=wanted.preview_fps
+                )
+        self._emit({"type": "settings", **self.settings()})
+        return self.settings()
+
+    def list_cameras(self) -> list[dict]:
+        """Ask the phone for its cameras, keeping them for later switches."""
+        found = cameras.list_cameras()
+        self._cameras = {camera.id: camera for camera in found}
+        return [
+            {"id": c.id, "label": c.label, "facing": c.facing} for c in found
+        ]
+
+    def camera(self) -> str:
+        """The chosen camera's id, an empty string for the default."""
+        return self._camera_id or ""
+
+    def set_camera(self, camera_id: str) -> None:
+        """Choose a camera, switching to it live if a run is going."""
+        chosen = camera_id or None
+        with self._lock:
+            if chosen == self._camera_id:
+                return
+            self._previous_camera = self._camera_id
+            self._camera_id = chosen
+            if self.state == RUNNING and self._process is not None:
+                self._switching = True
+                self._switched = True
+                self._set_state(SWITCHING)
+                self._process.terminate()
+        self._emit({"type": "camera", "id": self.camera()})
+
     def toggle_preview(self) -> None:
         """Open or close the live preview, ignored while one is changing."""
         with self._lock:
@@ -211,7 +278,9 @@ class Webcam:
             self._log("Start the webcam first, there is nothing to preview.")
             return
         self._emit_preview("starting")
-        preview = Preview(pipeline.WIDTH, pipeline.HEIGHT)
+        width, height = self._settings.size
+        rate = self._settings.preview_rate
+        preview = Preview(width, height, rate)
         try:
             url = preview.start()
         except OSError as exc:
@@ -219,7 +288,7 @@ class Webcam:
             self._emit_preview("closed")
             return
         self._preview = preview
-        live.set_preview(preview)
+        live.set_preview(preview, rate)
         if not preview.wait_for_first_frame(PREVIEW_TIMEOUT):
             self._log("The preview did not produce a picture in time.")
             self._stop_preview()
@@ -237,8 +306,10 @@ class Webcam:
 
     def _on_first_frame(self) -> None:
         """The first picture has arrived, so the webcam is really running."""
+        self._got_frame = True
+        self._switched = False
         with self._lock:
-            if self.state == STARTING:
+            if self.state in (STARTING, SWITCHING):
                 self._set_state(RUNNING)
 
     def _finish(self) -> None:
@@ -321,21 +392,11 @@ class Webcam:
 
     def _prepare(self) -> str | None:
         """Check the phone, set up the device, find its node."""
-        try:
-            proc = subprocess.run(
-                ["adb", "devices"], capture_output=True, text=True, timeout=30
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            self._log(f"Could not run adb: {exc}")
+        status = phone.check_phone()
+        if not status.ready:
+            self._log(phone.MESSAGES[status.state])
             return None
-        ready, unauthorised = parse_adb_devices(proc.stdout)
-        if not ready:
-            if unauthorised:
-                self._log("The phone is asking to authorise USB debugging.")
-            else:
-                self._log("No phone found. Connect it with USB debugging on.")
-            return None
-        self._log(f"Phone found: {ready[0]}")
+        self._log(f"Phone found: {status.serial}")
 
         if not self._ensure_devices():
             return None
@@ -345,7 +406,16 @@ class Webcam:
         return output
 
     def _start_pipeline(self, fifo: str, output: str) -> bool:
-        live = pipeline.Pipeline(fifo, output, self._log, self._on_first_frame)
+        width, height = self._settings.size
+        live = pipeline.Pipeline(
+            fifo,
+            output,
+            self._log,
+            self._on_first_frame,
+            width,
+            height,
+            self._settings.fps,
+        )
         live.set_orientation(*self._turn)
         try:
             live.start()
@@ -378,30 +448,69 @@ class Webcam:
             os.close(slave)
         return process, read_lines(master)
 
+    def _camera(self) -> cameras.Camera | None:
+        """The chosen camera, if the phone has reported it."""
+        return self._cameras.get(self._camera_id or "")
+
     def _stream(self, output: str) -> None:
-        """Run scrcpy until it exits, forwarding its output."""
+        """Run scrcpy until it ends, restarting it to switch cameras."""
         fifo = make_fifo()
         try:
             # The reader opens its end first, scrcpy then opens the other.
             if not self._start_pipeline(str(fifo), output):
                 return
-            self._log(f"Starting scrcpy, the webcam is {output}...")
-            try:
-                process, lines = self._spawn(scrcpy_args(str(fifo)))
-            except FileNotFoundError:
-                self._log("scrcpy not found. Is it installed and on PATH?")
-                return
-            with self._lock:
-                self._process = process
-                if self._stop_requested:
-                    process.terminate()
-            for line in lines:
-                self._log(line)
-            code = process.wait()
-            # A stop we asked for ends with SIGTERM, which is not an error.
-            if code != 0 and not (
-                self._stop_requested and code == SIGTERM_EXIT
-            ):
-                self._log(f"scrcpy exited with code {code}")
+            while True:
+                self._got_frame = False
+                code = self._run_scrcpy(fifo)
+                if code is None or self._stop_requested:
+                    return
+                if self._switching:
+                    self._switching = False
+                elif self._switched and not self._got_frame and code != 0:
+                    self._revert_camera()
+                else:
+                    if code != 0:
+                        self._log(f"scrcpy exited with code {code}")
+                    return
+                live = self._pipeline
+                if live is not None:
+                    live.restart_reader()
         finally:
             shutil.rmtree(fifo.parent, ignore_errors=True)
+
+    def _revert_camera(self) -> None:
+        """A camera that would not start, go back to the one before it."""
+        failed = self._camera_id
+        with self._lock:
+            self._camera_id = self._previous_camera
+            self._switched = False
+            self._set_state(SWITCHING)
+        self._log(
+            f"Camera {failed} could not start, going back to "
+            f"{self._camera_id or 'the default camera'}."
+        )
+        self._emit({"type": "camera", "id": self.camera()})
+
+    def _run_scrcpy(self, fifo: Path) -> int | None:
+        """Run one scrcpy, returning its exit code, None if it never ran."""
+        camera = self._camera()
+        name = f"camera {camera.id}" if camera else "the default camera"
+        self._log(f"Starting scrcpy on {name}...")
+        try:
+            process, lines = self._spawn(
+                scrcpy_args(str(fifo), camera, self._settings)
+            )
+        except FileNotFoundError:
+            self._log("scrcpy not found. Is it installed and on PATH?")
+            return None
+        with self._lock:
+            self._process = process
+            if self._stop_requested:
+                process.terminate()
+        for line in lines:
+            self._log(line)
+        code = process.wait()
+        # An ending we asked for is SIGTERM, which is not an error.
+        if code == SIGTERM_EXIT and (self._stop_requested or self._switching):
+            return 0
+        return code

@@ -6,17 +6,8 @@ import types
 
 import pytest
 
-from phone_webcam import webcam
-
-
-# ─────────────────────────────────────────────────────────────| Pure helpers |──
-def test_parse_adb_devices_splits_ready_and_unauthorised():
-    out = "List of devices attached\nabc\tdevice\ndef\tunauthorized\nghi\toffline\n\n"
-    assert webcam.parse_adb_devices(out) == (["abc"], ["def"])
-
-
-def test_parse_adb_devices_empty_list():
-    assert webcam.parse_adb_devices("List of devices attached\n\n") == ([], [])
+from phone_webcam import cameras, webcam
+from phone_webcam.settings import Settings
 
 
 # ───────────────────────────────────────────────────────────────| Controller |──
@@ -190,7 +181,9 @@ class FakePreview:
 def running(monkeypatch, preview):
     cam, events = make(monkeypatch)
     pipeline_calls = []
-    cam._pipeline = types.SimpleNamespace(set_preview=pipeline_calls.append)
+    cam._pipeline = types.SimpleNamespace(
+        set_preview=lambda sink, rate=None: pipeline_calls.append(sink)
+    )
     cam.state = webcam.RUNNING
     monkeypatch.setattr(webcam, "Preview", lambda *a: preview)
     return cam, events, pipeline_calls
@@ -278,3 +271,185 @@ def test_clean_line_keeps_the_last_progress_update():
 
 def test_clean_line_of_only_codes_is_empty():
     assert webcam.clean_line("\x1b[K\r") == ""
+
+
+# ──────────────────────────────────────────────────────────────────| Cameras |──
+BACK = cameras.Camera("0", "back", ("1920x1080",))
+FRONT = cameras.Camera("1", "front", ("1280x960",))
+
+
+def with_cameras(cam):
+    cam._cameras = {"0": BACK, "1": FRONT}
+
+
+def test_scrcpy_args_pick_the_chosen_camera_and_its_size():
+    args = webcam.scrcpy_args("/f", FRONT)
+    assert "--camera-id=1" in args
+    assert "--camera-size=1280x960" in args
+
+
+def test_scrcpy_args_without_a_camera_use_the_default():
+    args = webcam.scrcpy_args("/f")
+    assert not any(a.startswith("--camera-id") for a in args)
+    assert "--camera-size=1920x1080" in args
+
+
+def test_choosing_a_camera_while_stopped_only_remembers_it(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam.set_camera("1")
+    assert cam.camera() == "1"
+    assert states(events) == []
+    assert events[-1] == {"type": "camera", "id": "1"}
+
+
+def test_choosing_the_same_camera_does_nothing(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam.set_camera("")
+    assert events == []
+
+
+def test_choosing_a_camera_while_running_switches_live(monkeypatch):
+    cam, events = make(monkeypatch)
+    ended = []
+    cam._process = types.SimpleNamespace(terminate=lambda: ended.append(1))
+    cam.state = webcam.RUNNING
+    cam.set_camera("1")
+    assert states(events) == ["switching"]
+    assert ended == [1]
+    assert cam._switching
+
+
+def run_stream(monkeypatch, cam, runs):
+    """Drive _stream with scripted scrcpy runs, each a (code, action)."""
+    restarts = []
+    cam._pipeline = types.SimpleNamespace(
+        restart_reader=lambda: restarts.append(1)
+    )
+    scripted = iter(runs)
+    started = []
+
+    def run_scrcpy(fifo):
+        started.append(cam._camera_id)
+        code, action = next(scripted)
+        if action:
+            action()
+        return code
+
+    monkeypatch.setattr(cam, "_run_scrcpy", run_scrcpy)
+    monkeypatch.setattr(cam, "_start_pipeline", lambda f, o: True)
+    cam._stream("/dev/video0")
+    return started, restarts
+
+
+def test_a_switch_restarts_scrcpy_on_the_new_camera(monkeypatch):
+    cam, events = make(monkeypatch)
+    with_cameras(cam)
+    cam._camera_id = "0"
+
+    def switch():
+        cam._previous_camera, cam._camera_id = "0", "1"
+        cam._switching = cam._switched = True
+
+    def stop():
+        cam._stop_requested = True
+
+    started, restarts = run_stream(monkeypatch, cam, [(0, switch), (0, stop)])
+    assert started == ["0", "1"]
+    assert restarts == [1]
+
+
+def test_a_camera_that_fails_to_start_goes_back(monkeypatch):
+    cam, events = make(monkeypatch)
+    with_cameras(cam)
+    cam._camera_id = "0"
+
+    def switch():
+        cam._previous_camera, cam._camera_id = "0", "1"
+        cam._switching = cam._switched = True
+
+    def fail_then_nothing():
+        cam._switching = False  # the switch itself was handled
+
+    def stop():
+        cam._stop_requested = True
+
+    started, restarts = run_stream(
+        monkeypatch, cam, [(0, switch), (1, fail_then_nothing), (0, stop)]
+    )
+    assert started == ["0", "1", "0"]
+    assert any("going back to 0" in line for line in logs(events))
+    assert {"type": "camera", "id": "0"} in events
+
+
+def test_an_ordinary_failure_still_ends_the_run(monkeypatch):
+    cam, events = make(monkeypatch)
+    started, _ = run_stream(monkeypatch, cam, [(1, None)])
+    assert started == [None]
+    assert "scrcpy exited with code 1" in logs(events)
+
+
+def test_first_frame_after_a_switch_means_running_again(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam.state = webcam.SWITCHING
+    cam._switched = True
+    cam._on_first_frame()
+    assert cam.state == webcam.RUNNING
+    assert cam._switched is False
+
+
+# ─────────────────────────────────────────────────────────────────| Settings |──
+def test_scrcpy_args_follow_the_settings():
+    chosen = Settings(resolution="720p", fps=60, bitrate=16)
+    args = webcam.scrcpy_args("/f", None, chosen)
+    assert "--camera-size=1280x720" in args
+    assert "--camera-fps=60" in args
+    assert "--video-bit-rate=16M" in args
+
+
+def test_scrcpy_args_keep_to_what_the_camera_offers():
+    camera = cameras.Camera("0", "back", ("1920x1080", "1280x720"), (15, 30))
+    args = webcam.scrcpy_args("/f", camera, Settings(fps=60, resolution="720p"))
+    assert "--camera-size=1280x720" in args
+    assert "--camera-fps=30" in args
+
+
+def test_settings_change_freely_while_stopped(monkeypatch):
+    cam, events = make(monkeypatch)
+    applied = cam.set_settings({"fps": 60, "bitrate": 16})
+    assert applied["fps"] == 60 and applied["bitrate"] == 16
+    assert events[-1]["type"] == "settings"
+
+
+def test_only_the_preview_rate_changes_during_a_run(monkeypatch):
+    cam, _ = make(monkeypatch)
+    cam.state = webcam.RUNNING
+    applied = cam.set_settings({"fps": 60, "preview_fps": 60})
+    assert applied["fps"] == 30
+    assert applied["preview_fps"] == 60
+
+
+def test_bad_settings_are_ignored(monkeypatch):
+    cam, _ = make(monkeypatch)
+    applied = cam.set_settings({"fps": 999, "resolution": "8k"})
+    assert applied == Settings().as_dict()
+
+
+def test_the_pipeline_is_built_from_the_settings(monkeypatch):
+    built = {}
+
+    class FakePipeline:
+        def __init__(self, *args):
+            built["args"] = args
+
+        def set_orientation(self, *_):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(webcam.pipeline, "Pipeline", FakePipeline)
+    cam = webcam.Webcam(
+        lambda e: None, settings=Settings(resolution="720p", fps=60)
+    )
+    assert cam._start_pipeline("/fifo", "/dev/video0")
+    assert built["args"][4:] == (1280, 720, 60)
