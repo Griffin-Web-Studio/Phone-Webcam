@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BINARY_NAME="phone-webcam"
 PRODUCT_NAME="Phone Webcam"
 COMPANY_NAME="Griffin Web Studio"
-ICON="$SCRIPT_DIR/packaging/phone-webcam.svg"
+ICON="$SCRIPT_DIR/phone_webcam/assets/phone-webcam.svg"
 
 if ! command -v uv &>/dev/null; then
   echo "ERROR: uv is not installed." >&2

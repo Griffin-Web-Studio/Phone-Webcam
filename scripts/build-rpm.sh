@@ -43,7 +43,7 @@ mkdir -p "$TOP"/{SOURCES,SPECS,BUILD,RPMS,SRPMS,BUILDROOT}
 
 cp "$BINARY" "$TOP/SOURCES/$NAME"
 cp "$ROOT/packaging/$APP_ID.desktop" "$TOP/SOURCES/"
-cp "$ROOT/packaging/$NAME.svg" "$TOP/SOURCES/$APP_ID.svg"
+cp "$ROOT/phone_webcam/assets/$NAME.svg" "$TOP/SOURCES/$APP_ID.svg"
 cp "$ROOT/packaging/$NAME.1" "$TOP/SOURCES/"
 cp "$ROOT/LICENSE" "$TOP/SOURCES/"
 sed "s/@VERSION@/$VERSION/; s/@DATE@/$DATE_ISO/" \

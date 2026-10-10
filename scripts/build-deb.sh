@@ -53,7 +53,7 @@ mkdir -p "$STAGE/DEBIAN" \
 install -m 0755 "$BINARY" "$STAGE/usr/bin/$NAME"
 install -m 0644 "$ROOT/packaging/$APP_ID.desktop" \
   "$STAGE/usr/share/applications/$APP_ID.desktop"
-install -m 0644 "$ROOT/packaging/$NAME.svg" \
+install -m 0644 "$ROOT/phone_webcam/assets/$NAME.svg" \
   "$STAGE/usr/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 sed "s/@VERSION@/$VERSION/; s/@DATE@/$DATE_ISO/" \
   "$ROOT/packaging/$APP_ID.metainfo.xml.in" \
