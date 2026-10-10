@@ -16,9 +16,14 @@ stages:
   - test
   - build
   - publish
+  - release
 
 variables:
   PACKAGE: phone-webcam
+  # The tag and release that are replaced on every nightly. It must not be a
+  # protected tag, and the workflow in .gitlab-ci.yml must not run a pipeline
+  # for it, or creating it would start one.
+  NIGHTLY_TAG: nightly
   MAINTAINER: "$GITLAB_USER_NAME <$GITLAB_USER_EMAIL>"
   UV_FROZEN: "1"
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
@@ -113,17 +118,102 @@ build:nightly:
              "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$PACKAGE_VERSION/$(basename "$file")"
       done
 
-# Overwrites the single "nightly" entry on every scheduled run that has
-# changes. Also records $CI_COMMIT_SHA as nightly-sha.txt so the next
-# scheduled run's check:nightly (in the parent pipeline) can detect whether
-# main has moved since this build.
+# Overwrites the single "nightly" entry on every scheduled run that has changes.
 publish:nightly:
   extends: .publish
   needs: [build:nightly]
   variables:
     PACKAGE_VERSION: nightly
+
+# ─────────────────────────────────────────────────────────────────| Release |──
+#
+# One rolling release on the fixed "nightly" tag, replaced on every run, so the
+# releases page never fills up with nightlies and the links never change. A tag
+# cannot be moved, so the old release and tag are deleted and both made again at
+# the new commit.
+#
+# Deleting needs more than the job token may be allowed to do. If this job fails
+# with HTTP 401 or 403, create a project access token with the api scope and add
+# it as the RELEASE_TOKEN CI/CD variable, it is used when it is there.
+
+release:nightly:clean:
+  stage: release
+  image: curlimages/curl:latest
+  interruptible: false # never cancel between the delete and the create
+  needs: [publish:nightly]
   script:
-    - !reference [.publish, script]
+    - |
+      set -eu
+      if [ -n "${RELEASE_TOKEN:-}" ]; then
+        HEADER="PRIVATE-TOKEN: $RELEASE_TOKEN"
+      else
+        HEADER="JOB-TOKEN: $CI_JOB_TOKEN"
+      fi
+      API="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
+      # The release first, then the tag. Already gone (404) is fine, it is the
+      # first run, or an earlier one stopped half way.
+      for target in "releases/$NIGHTLY_TAG" "repository/tags/$NIGHTLY_TAG"; do
+        code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+                     --request DELETE --header "$HEADER" "$API/$target")"
+        case "$code" in
+          2??|404) echo "$target: HTTP $code" ;;
+          *)
+            echo "ERROR: could not delete $target (HTTP $code)." >&2
+            echo "       Add a project access token with the api scope as RELEASE_TOKEN," >&2
+            echo "       and make sure the $NIGHTLY_TAG tag is not protected." >&2
+            exit 1
+            ;;
+        esac
+      done
+
+release:nightly:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  interruptible: false # never cancel a mid-flight release
+  needs: [release:nightly:clean]
+  script:
+    - |
+      {
+        echo "> [!WARNING]"
+        echo "> This is an automatic build of the latest commit on \`$CI_DEFAULT_BRANCH\`, made on $(date -u +%Y-%m-%d)."
+        echo "> It is not a release. Use it to try what is coming, and expect rough edges."
+        echo ">"
+        echo "> Built from [\`$CI_COMMIT_SHORT_SHA\`]($CI_PROJECT_URL/-/commit/$CI_COMMIT_SHA) ($CI_COMMIT_TITLE), pipeline [#$CI_PIPELINE_IID]($CI_PIPELINE_URL)."
+        echo
+        sh scripts/gen-release-notes.sh "$NIGHTLY_TAG" nightly \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$NIGHTLY_TAG"
+      } > release-notes.md
+  release:
+    name: "Phone Webcam nightly ($CI_COMMIT_SHORT_SHA)"
+    description: "./release-notes.md"
+    tag_name: "$NIGHTLY_TAG"
+    ref: "$CI_COMMIT_SHA"
+    assets:
+      links:
+        - name: "phone-webcam (Linux x86_64, self-contained binary)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$NIGHTLY_TAG/phone-webcam"
+          link_type: package
+        - name: "phone-webcam.deb (Debian and Ubuntu)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$NIGHTLY_TAG/phone-webcam.deb"
+          link_type: package
+        - name: "phone-webcam.rpm (Fedora)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$NIGHTLY_TAG/phone-webcam.rpm"
+          link_type: package
+        - name: "SHA256SUMS"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE/$NIGHTLY_TAG/SHA256SUMS"
+          link_type: other
+
+# Records $CI_COMMIT_SHA as nightly-sha.txt so the next scheduled run's
+# check:nightly (in the parent pipeline) can detect whether main has moved since
+# this build. It is the last job on purpose: if the release failed, nothing is
+# recorded, and the next night builds and publishes again instead of deciding
+# there is nothing to do.
+record:nightly-sha:
+  stage: release
+  image: curlimages/curl:latest
+  interruptible: false
+  needs: [release:nightly]
+  script:
     - |
       echo -n "$CI_COMMIT_SHA" > nightly-sha.txt
       curl --fail --silent --show-error \
