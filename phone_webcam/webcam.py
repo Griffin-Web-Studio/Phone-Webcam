@@ -37,6 +37,7 @@ STARTING = "starting"
 RUNNING = "running"
 STOPPING = "stopping"
 SWITCHING = "switching"
+APPLYING = "applying"
 
 Emit = Callable[[dict], None]
 
@@ -133,7 +134,7 @@ class Webcam:
         self._preview_busy = False
         self._cameras: dict[str, cameras.Camera] = {}
         self._camera_id: str | None = None
-        self._previous_camera: str | None = None
+        self._previous: tuple[str | None, Settings] | None = None
         self._switching = False
         self._switched = False
         self._got_frame = False
@@ -201,20 +202,49 @@ class Webcam:
     def set_settings(self, data: dict) -> dict:
         """Change the stream settings, returning what was applied.
 
-        The output and the camera are fixed while a run is under way, so only
-        the preview rate, which is read each time a preview opens, can change
-        then.
+        The resolution is the output's format, which apps have already
+        agreed to, so it only changes while stopped. The frame rate and
+        bitrate are decided on the phone, so while running they restart scrcpy
+        behind the output, which holds its last picture meanwhile. The preview
+        rate is read each time a preview opens, so it can always change.
         """
         wanted = Settings.from_dict({**self._settings.as_dict(), **data})
         with self._lock:
+            current = self._settings
             if self.state == STOPPED:
                 self._settings = wanted
+            elif self.state == RUNNING and self._process is not None:
+                live = replace(
+                    current,
+                    fps=wanted.fps,
+                    bitrate=wanted.bitrate,
+                    preview_fps=wanted.preview_fps,
+                )
+                restart = (live.fps, live.bitrate) != (
+                    current.fps,
+                    current.bitrate,
+                )
+                if restart:
+                    self._previous = (self._camera_id, current)
+                self._settings = live
+                if restart:
+                    if self._pipeline is not None:
+                        self._pipeline.set_fps(live.fps)
+                    self._restart_scrcpy(APPLYING)
             else:
                 self._settings = replace(
-                    self._settings, preview_fps=wanted.preview_fps
+                    current, preview_fps=wanted.preview_fps
                 )
         self._emit({"type": "settings", **self.settings()})
         return self.settings()
+
+    def _restart_scrcpy(self, state: str) -> None:
+        """End this scrcpy so the run loop starts another. Lock is held."""
+        assert self._process is not None
+        self._switching = True
+        self._switched = True
+        self._set_state(state)
+        self._process.terminate()
 
     def list_cameras(self) -> list[dict]:
         """Ask the phone for its cameras, keeping them for later switches."""
@@ -234,13 +264,10 @@ class Webcam:
         with self._lock:
             if chosen == self._camera_id:
                 return
-            self._previous_camera = self._camera_id
+            self._previous = (self._camera_id, self._settings)
             self._camera_id = chosen
             if self.state == RUNNING and self._process is not None:
-                self._switching = True
-                self._switched = True
-                self._set_state(SWITCHING)
-                self._process.terminate()
+                self._restart_scrcpy(SWITCHING)
         self._emit({"type": "camera", "id": self.camera()})
 
     def toggle_preview(self) -> None:
@@ -309,7 +336,7 @@ class Webcam:
         self._got_frame = True
         self._switched = False
         with self._lock:
-            if self.state in (STARTING, SWITCHING):
+            if self.state in (STARTING, SWITCHING, APPLYING):
                 self._set_state(RUNNING)
 
     def _finish(self) -> None:
@@ -467,7 +494,7 @@ class Webcam:
                 if self._switching:
                     self._switching = False
                 elif self._switched and not self._got_frame and code != 0:
-                    self._revert_camera()
+                    self._revert_change()
                 else:
                     if code != 0:
                         self._log(f"scrcpy exited with code {code}")
@@ -478,18 +505,20 @@ class Webcam:
         finally:
             shutil.rmtree(fifo.parent, ignore_errors=True)
 
-    def _revert_camera(self) -> None:
-        """A camera that would not start, go back to the one before it."""
-        failed = self._camera_id
+    def _revert_change(self) -> None:
+        """A camera or settings that would not start, go back to the last."""
+        previous = self._previous
+        if previous is None:
+            return
         with self._lock:
-            self._camera_id = self._previous_camera
+            self._camera_id, self._settings = previous
             self._switched = False
-            self._set_state(SWITCHING)
-        self._log(
-            f"Camera {failed} could not start, going back to "
-            f"{self._camera_id or 'the default camera'}."
-        )
+            self._set_state(APPLYING)
+        if self._pipeline is not None:
+            self._pipeline.set_fps(self._settings.fps)
+        self._log("That could not start, going back to the previous choice.")
         self._emit({"type": "camera", "id": self.camera()})
+        self._emit({"type": "settings", **self.settings()})
 
     def _run_scrcpy(self, fifo: Path) -> int | None:
         """Run one scrcpy, returning its exit code, None if it never ran."""

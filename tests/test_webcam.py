@@ -323,7 +323,8 @@ def run_stream(monkeypatch, cam, runs):
     """Drive _stream with scripted scrcpy runs, each a (code, action)."""
     restarts = []
     cam._pipeline = types.SimpleNamespace(
-        restart_reader=lambda: restarts.append(1)
+        restart_reader=lambda: restarts.append(1),
+        set_fps=lambda fps: None,
     )
     scripted = iter(runs)
     started = []
@@ -347,7 +348,7 @@ def test_a_switch_restarts_scrcpy_on_the_new_camera(monkeypatch):
     cam._camera_id = "0"
 
     def switch():
-        cam._previous_camera, cam._camera_id = "0", "1"
+        cam._previous, cam._camera_id = ("0", Settings()), "1"
         cam._switching = cam._switched = True
 
     def stop():
@@ -364,7 +365,7 @@ def test_a_camera_that_fails_to_start_goes_back(monkeypatch):
     cam._camera_id = "0"
 
     def switch():
-        cam._previous_camera, cam._camera_id = "0", "1"
+        cam._previous, cam._camera_id = ("0", Settings()), "1"
         cam._switching = cam._switched = True
 
     def fail_then_nothing():
@@ -377,7 +378,7 @@ def test_a_camera_that_fails_to_start_goes_back(monkeypatch):
         monkeypatch, cam, [(0, switch), (1, fail_then_nothing), (0, stop)]
     )
     assert started == ["0", "1", "0"]
-    assert any("going back to 0" in line for line in logs(events))
+    assert any("going back" in line for line in logs(events))
     assert {"type": "camera", "id": "0"} in events
 
 
@@ -420,12 +421,67 @@ def test_settings_change_freely_while_stopped(monkeypatch):
     assert events[-1]["type"] == "settings"
 
 
-def test_only_the_preview_rate_changes_during_a_run(monkeypatch):
+def test_only_the_preview_rate_changes_before_the_run_settles(monkeypatch):
     cam, _ = make(monkeypatch)
-    cam.state = webcam.RUNNING
+    cam.state = webcam.STARTING
     applied = cam.set_settings({"fps": 60, "preview_fps": 60})
     assert applied["fps"] == 30
     assert applied["preview_fps"] == 60
+
+
+def running_with_process(monkeypatch):
+    cam, events = make(monkeypatch)
+    ended, rates = [], []
+    cam._process = types.SimpleNamespace(terminate=lambda: ended.append(1))
+    cam._pipeline = types.SimpleNamespace(set_fps=rates.append)
+    cam.state = webcam.RUNNING
+    return cam, events, ended, rates
+
+
+def test_frame_rate_and_bitrate_apply_live_by_restarting_scrcpy(monkeypatch):
+    cam, events, ended, rates = running_with_process(monkeypatch)
+    applied = cam.set_settings({"fps": 60, "bitrate": 16})
+    assert (applied["fps"], applied["bitrate"]) == (60, 16)
+    assert states(events) == ["applying"]
+    assert ended == [1]
+    assert rates == [60]
+    assert cam._previous == (None, Settings())
+
+
+def test_the_resolution_cannot_change_while_running(monkeypatch):
+    cam, events, ended, _ = running_with_process(monkeypatch)
+    applied = cam.set_settings({"resolution": "720p"})
+    assert applied["resolution"] == "1080p"
+    assert ended == []
+    assert states(events) == []
+
+
+def test_the_preview_rate_alone_does_not_restart_scrcpy(monkeypatch):
+    cam, events, ended, rates = running_with_process(monkeypatch)
+    cam.set_settings({"preview_fps": 60})
+    assert ended == [] and rates == []
+    assert states(events) == []
+
+
+def test_a_setting_scrcpy_refuses_goes_back(monkeypatch):
+    cam, events = make(monkeypatch)
+    old = Settings()
+    cam._settings = Settings(fps=60)
+    cam._previous = (None, old)
+
+    def switch():
+        cam._switching = cam._switched = True
+
+    def fail():
+        cam._switching = False
+
+    def stop():
+        cam._stop_requested = True
+
+    run_stream(monkeypatch, cam, [(0, switch), (1, fail), (0, stop)])
+    assert cam._settings == old
+    assert events[-1]["type"] == "settings"
+    assert events[-1]["fps"] == 30
 
 
 def test_bad_settings_are_ignored(monkeypatch):

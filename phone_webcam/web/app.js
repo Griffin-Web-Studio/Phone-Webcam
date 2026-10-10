@@ -48,6 +48,7 @@ const LABELS = {
   running: "Running",
   stopping: "Stopping...",
   switching: "Switching camera...",
+  applying: "Applying settings...",
 };
 
 /**
@@ -58,11 +59,14 @@ function setState(state) {
   statusEl.dataset.state = state;
   startBtn.disabled = state !== "stopped";
   stopBtn.disabled = state === "stopped" || state === "stopping";
-  cameraSelect.disabled = state === "switching" || state === "stopping";
-  // The output is fixed while running, only the preview rate can change.
-  for (const select of [setResolution, setFps, setBitrate]) {
-    select.disabled = state !== "stopped";
-  }
+  cameraSelect.disabled = ["switching", "applying", "stopping"].includes(state);
+  // The resolution is the output's format, so it only changes while stopped.
+  // The frame rate and bitrate restart the phone side and so can change live,
+  // but not in the middle of another change.
+  const settled = state === "stopped" || state === "running";
+  setResolution.disabled = state !== "stopped";
+  setFps.disabled = !settled;
+  setBitrate.disabled = !settled;
 }
 
 /**
