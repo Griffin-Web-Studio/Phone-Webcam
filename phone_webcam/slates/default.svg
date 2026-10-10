@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The cover image, shown instead of the camera picture. Copy this file and edit
+  it to make your own, then choose it in the app under "Cover image".
+
+  {{title}} and {{subtitle}} are replaced with the text typed in the app, or
+  with a notice such as "Switching camera". Put them where text should go.
+  {{icon}} is the app's icon, use it as the address of an <image>.
+
+  Keep these points in mind:
+  - Make the picture 1920x1080 (or the size of your output), the size here is
+    what is drawn, it is not stretched.
+  - Text does not wrap, so keep it short. Titles are limited to 32 characters
+    and subtitles to 64.
+  - Fonts come from the computer the app runs on, so name a common family.
+  - Put pictures inside the file as data: addresses, linked files are not found.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <rect width="1920" height="1080" fill="#1B3464"/>
+  <image x="790" y="130" width="340" height="340" xlink:href="{{icon}}" href="{{icon}}"/>
+  <text x="960" y="690" text-anchor="middle" font-family="sans-serif" font-size="88" font-weight="600" fill="#E7EDF7">{{title}}</text>
+  <text x="960" y="780" text-anchor="middle" font-family="sans-serif" font-size="44" fill="#9AA8C2">{{subtitle}}</text>
+</svg>
