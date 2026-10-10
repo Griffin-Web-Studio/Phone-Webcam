@@ -31,8 +31,14 @@ field() {
     "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['$1'])")
 }
 VERSION="$(field version)"
+# A pre-release such as 1.0.0-rc.0 or 1.0.0-nightly.abc1234 is a fine git tag, but
+# in a package version a dash starts the revision, and rpm does not allow it at
+# all. A tilde says "sorts before the plain version", which is what a
+# pre-release means, so 1.0.0~rc.0 comes before 1.0.0.
+VERSION="${VERSION//-/\~}"
 SUMMARY="$(field description)"
 URL="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -E 's#\.git$##' || true)"
+# CI has no git identity, so it passes MAINTAINER in the environment.
 MAINTAINER="${MAINTAINER:-$(git -C "$ROOT" config user.name) <$(git -C "$ROOT" config user.email)>}"
 # rpm checks that the weekday matches the date, so it is written the way it wants.
 CHANGELOG_DATE="$(LC_ALL=C date '+%a %b %d %Y')"

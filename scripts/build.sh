@@ -46,6 +46,13 @@ project_field() {
 VERSION="$(project_field version)"
 # Nuitka wants up to four plain numbers, so a suffix such as -rc1 is dropped.
 FILE_VERSION="$(echo "$VERSION" | grep -oE '^[0-9]+(\.[0-9]+){0,3}')"
+# Nightly builds are all the same plain version, and the folder the binary
+# unpacks into is named after it, so each one would run the files of the one
+# before. CI passes a number that is different every time, which becomes the
+# fourth part of the file version, and so a folder of its own.
+if [ -n "${BUILD_NUMBER:-}" ]; then
+  FILE_VERSION="$FILE_VERSION.$BUILD_NUMBER"
+fi
 
 # The binary unpacks itself once into ~/.cache/<company>/<product>/<version> and
 # reuses that on every later start, which is what makes it start quickly. The
