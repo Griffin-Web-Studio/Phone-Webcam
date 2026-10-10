@@ -12,6 +12,7 @@ live, without restarting scrcpy or interrupting the output.
 import os
 import pty
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -52,6 +53,19 @@ Emit = Callable[[dict], None]
 
 
 # ─────────────────────────────────────────────────────────────────| Helpers |──
+def camera_request(
+    camera: cameras.Camera | None, settings: Settings
+) -> tuple[str, int]:
+    """The size and frame rate to ask for, kept to what the camera offers."""
+    limit = settings.size
+    if camera:
+        return (
+            cameras.pick_size(camera.sizes, limit),
+            cameras.pick_fps(camera.fps, settings.fps),
+        )
+    return f"{limit[0]}x{limit[1]}", settings.fps
+
+
 def scrcpy_args(
     fifo: str,
     camera: cameras.Camera | None = None,
@@ -63,13 +77,7 @@ def scrcpy_args(
     are the settings, kept within what the chosen camera can do.
     """
     selection = [f"--camera-id={camera.id}"] if camera else []
-    limit = settings.size
-    if camera:
-        size = cameras.pick_size(camera.sizes, limit)
-        fps = cameras.pick_fps(camera.fps, settings.fps)
-    else:
-        size = f"{limit[0]}x{limit[1]}"
-        fps = settings.fps
+    size, fps = camera_request(camera, settings)
     return [
         "scrcpy",
         "--no-window",
@@ -662,10 +670,18 @@ class Webcam:
         camera = self._camera()
         name = f"camera {camera.id}" if camera else "the default camera"
         self._log(f"Starting scrcpy on {name}...")
-        try:
-            process, lines = self._spawn(
-                scrcpy_args(str(fifo), camera, self._settings)
+        args = scrcpy_args(str(fifo), camera, self._settings)
+        # The exact command, so a phone that misbehaves can be tried by hand with
+        # the same options, and so a bug report shows what was asked for.
+        self._log("  " + shlex.join(args))
+        _, fps = camera_request(camera, self._settings)
+        if fps != self._settings.fps:
+            self._log(
+                f"This camera offers at most {fps} fps, so {fps} is asked for "
+                f"and not {self._settings.fps}."
             )
+        try:
+            process, lines = self._spawn(args)
         except FileNotFoundError:
             self._log("scrcpy not found. Is it installed and on PATH?")
             return None

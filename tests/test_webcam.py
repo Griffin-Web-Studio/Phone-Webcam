@@ -743,3 +743,75 @@ def test_the_output_opens_already_covered(monkeypatch):
 def test_nothing_is_shown_when_the_camera_is_off(monkeypatch):
     cam, _ = make(monkeypatch)
     cam._set_state(webcam.SWITCHING)  # no pipeline, no slates, no error
+
+
+# ───────────────────────────────────────────────────────────| The command shown |──
+def test_the_exact_scrcpy_command_is_logged_so_it_can_be_tried_by_hand(
+    monkeypatch,
+):
+    cam, events = make(monkeypatch, lines=["INFO: hello"])
+    cam._settings = Settings(fps=60, bitrate=24)
+    cam._cameras = {
+        "52": cameras.Camera("52", "back", ("1920x1080",), (30, 60))
+    }
+    cam._camera_id = "52"
+    seen = []
+    original = cam._spawn
+    monkeypatch.setattr(
+        cam, "_spawn", lambda args: seen.append(args) or original(args)
+    )
+    cam._stream("/dev/video0")
+
+    out = logs(events)
+    start = out.index("Starting scrcpy on camera 52...")
+    command = out[start + 1]
+    assert command == "  " + __import__("shlex").join(seen[0])
+    for option in (
+        "--camera-id=52",
+        "--camera-size=1920x1080",
+        "--camera-fps=60",
+        "--video-bit-rate=24M",
+    ):
+        assert option in command
+
+
+# ─────────────────────────────────────────────────────────| Held to what it offers |──
+S10_BACK = cameras.Camera("0", "back", ("4032x3024",), (15, 20, 24, 30))
+
+
+def test_60_fps_is_asked_of_an_s10_camera_as_30():
+    args = webcam.scrcpy_args("/f", S10_BACK, Settings(fps=60))
+    assert "--camera-fps=30" in args
+    assert "--camera-fps=60" not in args
+
+
+def test_a_frame_rate_the_camera_offers_is_left_alone(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=24)
+    cam._cameras = {"0": S10_BACK}
+    cam._camera_id = "0"
+    cam._stream("/dev/video0")
+    assert not any("at most" in line for line in logs(events))
+    assert any("--camera-fps=24" in line for line in logs(events))
+
+
+def test_holding_the_frame_rate_down_is_said_in_the_log(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=60)
+    cam._cameras = {"0": S10_BACK}
+    cam._camera_id = "0"
+    cam._stream("/dev/video0")
+    out = logs(events)
+    assert (
+        "This camera offers at most 30 fps, so 30 is asked for and not 60."
+        in out
+    )
+    assert any("--camera-fps=30" in line for line in out)
+
+
+def test_a_camera_with_no_known_limit_is_asked_for_what_was_chosen(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=60)
+    cam._stream("/dev/video0")  # the default camera, nothing is known about it
+    assert not any("at most" in line for line in logs(events))
+    assert any("--camera-fps=60" in line for line in logs(events))
