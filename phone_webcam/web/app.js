@@ -3,6 +3,7 @@
 
 /** @typedef {import("./types").WebcamEvent} WebcamEvent */
 /** @typedef {import("./types").Orientation} Orientation */
+/** @typedef {import("./types").PreviewEvent} PreviewEvent */
 
 const statusEl = byId("status", HTMLElement);
 const startBtn = byId("start", HTMLButtonElement);
@@ -14,6 +15,11 @@ const mirrorBtn = byId("mirror", HTMLButtonElement);
 const resetBtn = byId("reset", HTMLButtonElement);
 const turnEl = byId("turn", HTMLElement);
 const previewBtn = byId("preview", HTMLButtonElement);
+const previewPanel = byId("preview-panel", HTMLElement);
+const previewImg = byId("preview-img", HTMLImageElement);
+const busy = byId("busy", HTMLElement);
+const busyText = byId("busy-text", HTMLElement);
+const busyDismiss = byId("busy-dismiss", HTMLButtonElement);
 const confirmDialog = byId("confirm", HTMLDialogElement);
 const confirmMessage = byId("confirm-message", HTMLElement);
 const confirmYes = byId("confirm-yes", HTMLButtonElement);
@@ -61,6 +67,31 @@ function showOrientation(next) {
 }
 
 /**
+ * Follow the preview through its states, with a notice while it changes.
+ * @param {PreviewEvent["state"]} state
+ * @param {string | null} url
+ */
+function showPreview(state, url) {
+  const changing = state === "starting" || state === "stopping";
+  busy.hidden = !changing;
+  busyText.textContent =
+    state === "starting"
+      ? "Starting preview, please wait..."
+      : "Stopping preview, please wait...";
+  previewBtn.disabled = changing;
+
+  if (state === "open" && url !== null) {
+    previewImg.src = url;
+    previewPanel.hidden = false;
+    previewBtn.textContent = "Close preview";
+  } else if (state === "closed") {
+    previewImg.removeAttribute("src");
+    previewPanel.hidden = true;
+    previewBtn.textContent = "Preview";
+  }
+}
+
+/**
  * Ask Python to turn the image, which applies on the next frame.
  * @param {number} step quarter turns clockwise, negative for anticlockwise
  */
@@ -93,7 +124,7 @@ window.onWebcamEvent = (event) => {
       showOrientation(event);
       break;
     case "preview":
-      previewBtn.textContent = event.open ? "Close preview" : "Preview";
+      showPreview(event.state, event.url);
       break;
     case "confirm":
       confirmMessage.textContent = event.message;
@@ -118,6 +149,16 @@ resetBtn.addEventListener("click", () =>
 previewBtn.addEventListener("click", () =>
   window.pywebview.api.toggle_preview(),
 );
+// Dismissing is an escape hatch, so it also frees the button in case a state
+// change never arrives.
+function dismissBusy() {
+  busy.hidden = true;
+  previewBtn.disabled = false;
+}
+busyDismiss.addEventListener("click", dismissBusy);
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") dismissBusy();
+});
 confirmYes.addEventListener("click", () => answer(true));
 confirmNo.addEventListener("click", () => answer(false));
 confirmDialog.addEventListener("cancel", () => answer(false));

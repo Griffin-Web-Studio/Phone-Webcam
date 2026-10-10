@@ -21,11 +21,17 @@ export interface Orientation {
   mirror: boolean;
 }
 
+export interface PreviewEvent {
+  type: "preview";
+  state: "starting" | "open" | "stopping" | "closed";
+  url: string | null;
+}
+
 export type WebcamEvent =
   | { type: "state"; state: string }
   | { type: "log"; line: string }
   | ({ type: "orientation" } & Orientation)
-  | { type: "preview"; open: boolean }
+  | PreviewEvent
   | { type: "confirm"; message: string };
 
 export interface Api {

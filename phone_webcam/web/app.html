@@ -25,8 +25,18 @@
         <output id="turn" class="muted">0°</output>
         <button id="preview" type="button" class="push">Preview</button>
       </section>
+      <figure id="preview-panel" hidden>
+        <img id="preview-img" alt="Live preview" width="480" height="270" />
+      </figure>
       <pre id="log" aria-live="polite"></pre>
     </main>
+    <div id="busy" role="status" hidden>
+      <div class="busy-card">
+        <span class="spinner" aria-hidden="true"></span>
+        <p id="busy-text"></p>
+        <button id="busy-dismiss" type="button">Dismiss</button>
+      </div>
+    </div>
     <dialog id="confirm">
       <p id="confirm-message"></p>
       <div class="actions">
