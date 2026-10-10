@@ -251,3 +251,66 @@ def test_api_saves_settings_without_losing_the_orientation():
     assert saved["rotation"] == 90
     assert saved["settings"]["fps"] == 60
     assert Api().get_settings()["bitrate"] == 16
+
+
+def test_entering_the_app_resizes_the_window():
+    from phone_webcam import api as api_module
+
+    sizes = []
+    api = api_module.Api()
+    api.attach(
+        types.SimpleNamespace(
+            resize=lambda w, h: sizes.append((w, h)),
+            evaluate_js=lambda js: None,
+        )
+    )
+    api.enter_app()
+    api.shutdown()
+    assert sizes == [api_module.APP_SIZE]
+
+
+def test_entering_the_app_without_a_window_is_harmless():
+    from phone_webcam.api import Api
+
+    Api().enter_app()
+
+
+def test_the_side_panel_width_is_saved_and_reset():
+    from phone_webcam.api import Api
+
+    api = Api()
+    assert api.get_side_width() == 0
+    api.set_side_width(412)
+    assert Api().get_side_width() == 412
+    api.set_side_width(0)
+    assert api.get_side_width() == 0
+
+
+def test_a_bad_saved_width_is_ignored():
+    from phone_webcam import config
+    from phone_webcam.api import Api
+
+    config.update_prefs({"side_width": "wide"})
+    assert Api().get_side_width() == 0
+
+
+def test_saving_the_width_keeps_the_other_choices():
+    from phone_webcam import config
+    from phone_webcam.api import Api
+
+    api = Api()
+    api.set_orientation(90, True)
+    api.set_side_width(300)
+    saved = config.load_prefs()
+    assert saved["rotation"] == 90 and saved["side_width"] == 300
+
+
+def test_api_passes_the_preview_wish_to_the_webcam(monkeypatch):
+    from phone_webcam.api import Api
+
+    api = Api()
+    seen = []
+    monkeypatch.setattr(api._webcam, "set_preview_wanted", seen.append)
+    api.show_preview(True)
+    api.show_preview(False)
+    assert seen == [True, False]

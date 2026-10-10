@@ -38,6 +38,8 @@ RUNNING = "running"
 STOPPING = "stopping"
 SWITCHING = "switching"
 APPLYING = "applying"
+# The preview carries on through a switch, showing the held last picture.
+PREVIEW_STATES = (RUNNING, SWITCHING, APPLYING)
 
 Emit = Callable[[dict], None]
 
@@ -132,6 +134,9 @@ class Webcam:
         self._pipeline: pipeline.Pipeline | None = None
         self._preview: Preview | None = None
         self._preview_busy = False
+        self._preview_wanted = False
+        self._preview_failed = False
+        self._ending = False
         self._cameras: dict[str, cameras.Camera] = {}
         self._camera_id: str | None = None
         self._previous: tuple[str | None, Settings] | None = None
@@ -152,6 +157,8 @@ class Webcam:
             if self.state != STOPPED:
                 return
             self._stop_requested = False
+            self._ending = False
+            self._preview_failed = False
             self._set_state(STARTING)
         self._worker = threading.Thread(
             target=self._run, name="webcam-worker", daemon=True
@@ -270,13 +277,16 @@ class Webcam:
                 self._restart_scrcpy(SWITCHING)
         self._emit({"type": "camera", "id": self.camera()})
 
-    def toggle_preview(self) -> None:
-        """Open or close the live preview, ignored while one is changing."""
-        with self._lock:
-            if self._preview_busy:
-                return
-            self._preview_busy = True
-        threading.Thread(target=self._toggle_preview, daemon=True).start()
+    def set_preview_wanted(self, wanted: bool) -> None:
+        """Say whether a preview should be showing.
+
+        The preview follows once it can, that is while the webcam runs, and
+        is dropped when it is no longer wanted. Asking again for what is
+        already so does nothing.
+        """
+        self._preview_wanted = wanted
+        self._preview_failed = False
+        self._reconcile_preview()
 
     # ──────────────────────────────────────────────────────────────| Worker |──
     def _set_state(self, state: str) -> None:
@@ -286,23 +296,51 @@ class Webcam:
     def _log(self, line: str) -> None:
         self._emit({"type": "log", "line": line})
 
-    def _toggle_preview(self) -> None:
-        try:
-            if self._preview is not None:
-                self._emit_preview("stopping")
-                self._stop_preview()
-            else:
-                self._start_preview()
-        finally:
+    def _reconcile_preview(self) -> None:
+        """Bring the preview in line with what is wanted, off this thread."""
+        with self._lock:
+            if self._preview_busy:
+                return
+            self._preview_busy = True
+        threading.Thread(target=self._reconcile_loop, daemon=True).start()
+
+    def _next_preview_action(self) -> Callable[[], None] | None:
+        """Pick the next step, or None once the preview is as wanted."""
+        with self._lock:
+            possible = (
+                self._preview_wanted
+                and self._pipeline is not None
+                and self.state in PREVIEW_STATES
+                and not self._ending
+            )
+            if possible and self._preview is None and not self._preview_failed:
+                return self._start_preview
+            if not possible and self._preview is not None:
+                return self._end_preview
             self._preview_busy = False
+            return None
+
+    def _reconcile_loop(self) -> None:
+        # Each step re-checks what is wanted, so a change made meanwhile is
+        # picked up here and is never lost.
+        try:
+            while (action := self._next_preview_action()) is not None:
+                action()
+        except Exception as exc:  # noqa: BLE001 - never leave the loop wedged
+            self._log(f"The preview failed: {type(exc).__name__}: {exc}")
+            self._preview_failed = True
+            self._preview_busy = False
+
+    def _end_preview(self) -> None:
+        self._emit_preview("stopping")
+        self._stop_preview()
 
     def _emit_preview(self, state: str, url: str | None = None) -> None:
         self._emit({"type": "preview", "state": state, "url": url})
 
     def _start_preview(self) -> None:
         live = self._pipeline
-        if live is None or self.state != RUNNING:
-            self._log("Start the webcam first, there is nothing to preview.")
+        if live is None:
             return
         self._emit_preview("starting")
         width, height = self._settings.size
@@ -312,12 +350,14 @@ class Webcam:
             url = preview.start()
         except OSError as exc:
             self._log(f"Could not start the preview: {exc}")
+            self._preview_failed = True
             self._emit_preview("closed")
             return
         self._preview = preview
         live.set_preview(preview, rate)
         if not preview.wait_for_first_frame(PREVIEW_TIMEOUT):
             self._log("The preview did not produce a picture in time.")
+            self._preview_failed = True
             self._stop_preview()
             return
         self._emit_preview("open", url)
@@ -338,9 +378,11 @@ class Webcam:
         with self._lock:
             if self.state in (STARTING, SWITCHING, APPLYING):
                 self._set_state(RUNNING)
+        self._reconcile_preview()
 
     def _finish(self) -> None:
         with self._lock:
+            self._ending = True
             if self._process is not None and self._process.poll() is None:
                 self._process.terminate()
         self._stop_preview()

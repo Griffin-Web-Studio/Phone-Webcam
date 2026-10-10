@@ -11,6 +11,8 @@ from phone_webcam import config, deps, phone, pipeline, webcam
 from phone_webcam.clipboard import Clipboard
 from phone_webcam.settings import Settings
 
+APP_SIZE = (1100, 720)
+
 
 class Api:
     """Methods the pages can call as window.pywebview.api.*."""
@@ -36,6 +38,21 @@ class Api:
         """Give the bridge the window it pushes events to."""
         self._window = window
         self._phone.start()
+
+    def enter_app(self) -> None:
+        """Make the window big enough for the main view."""
+        window = self._window
+        if window is not None:
+            window.resize(*APP_SIZE)
+
+    def get_side_width(self) -> int:
+        """The side panel's saved width in pixels, 0 for the default."""
+        width = config.load_prefs().get("side_width", 0)
+        return width if isinstance(width, int) and width > 0 else 0
+
+    def set_side_width(self, width: int) -> None:
+        """Remember the side panel's width, 0 to go back to the default."""
+        config.update_prefs({"side_width": max(0, int(width))})
 
     # ─────────────────────────────────────────────────────────────| Gates |──
     def get_report(self) -> dict:
@@ -104,9 +121,9 @@ class Api:
         """Reply to a confirmation the page was asked to show."""
         self._webcam.answer(yes)
 
-    def toggle_preview(self) -> None:
-        """Open or close the preview window."""
-        self._webcam.toggle_preview()
+    def show_preview(self, wanted: bool) -> None:
+        """Say whether the preview should show, it follows when it can."""
+        self._webcam.set_preview_wanted(wanted)
 
     def shutdown(self) -> None:
         """Stop the webcam when the window closes."""

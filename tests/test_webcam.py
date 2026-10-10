@@ -2,6 +2,7 @@
 
 import subprocess
 import threading
+import time
 import types
 
 import pytest
@@ -157,12 +158,6 @@ def test_scrcpy_args_record_to_the_fifo_with_frequent_keyframes():
     assert not any(a.startswith("--v4l2-sink") for a in args)
 
 
-def test_preview_needs_a_running_webcam(monkeypatch):
-    cam, events = make(monkeypatch)
-    cam._toggle_preview()
-    assert "Start the webcam first" in logs(events)[-1]
-
-
 class FakePreview:
     def __init__(self, ready=True):
         self.ready = ready
@@ -189,44 +184,109 @@ def running(monkeypatch, preview):
     return cam, events, pipeline_calls
 
 
+def settle(cam, wanted):
+    """Ask for the preview and let it reconcile, on this thread."""
+    cam._preview_wanted = wanted
+    cam._preview_failed = False
+    cam._preview_busy = True
+    cam._reconcile_loop()
+
+
 def preview_states(events):
     return [e["state"] for e in events if e["type"] == "preview"]
 
 
-def test_preview_goes_starting_then_open_with_the_address(monkeypatch):
+def test_a_wanted_preview_goes_starting_then_open_with_the_address(monkeypatch):
     preview = FakePreview()
     cam, events, calls = running(monkeypatch, preview)
-    cam._toggle_preview()
+    settle(cam, True)
     assert preview_states(events) == ["starting", "open"]
     assert events[-1]["url"] == "http://127.0.0.1:1/secret.mjpg"
     assert calls == [preview]
 
 
-def test_preview_goes_stopping_then_closed(monkeypatch):
+def test_an_unwanted_preview_goes_stopping_then_closed(monkeypatch):
     preview = FakePreview()
     cam, events, calls = running(monkeypatch, preview)
-    cam._toggle_preview()
+    settle(cam, True)
     events.clear()
-    cam._toggle_preview()
+    settle(cam, False)
     assert preview_states(events) == ["stopping", "closed"]
     assert preview.stopped
     assert calls[-1] is None
 
 
-def test_preview_that_never_shows_a_picture_is_closed(monkeypatch):
+def test_asking_again_for_what_is_so_does_nothing(monkeypatch):
+    cam, events, _ = running(monkeypatch, FakePreview())
+    settle(cam, True)
+    events.clear()
+    settle(cam, True)
+    assert events == []
+    settle(cam, False)
+    events.clear()
+    settle(cam, False)
+    assert events == []
+
+
+def test_no_preview_starts_before_the_webcam_runs(monkeypatch):
+    cam, events, calls = running(monkeypatch, FakePreview())
+    cam.state = webcam.STARTING
+    settle(cam, True)
+    assert events == [] and calls == []
+
+
+def test_the_preview_survives_a_camera_switch(monkeypatch):
+    cam, events, _ = running(monkeypatch, FakePreview())
+    settle(cam, True)
+    cam.state = webcam.SWITCHING
+    events.clear()
+    settle(cam, True)
+    assert events == []
+
+
+def test_the_preview_goes_when_the_run_ends(monkeypatch):
+    preview = FakePreview()
+    cam, events, _ = running(monkeypatch, preview)
+    settle(cam, True)
+    cam._ending = True
+    events.clear()
+    settle(cam, True)
+    assert preview_states(events) == ["stopping", "closed"]
+
+
+def test_a_preview_that_never_shows_a_picture_is_closed_and_not_retried(
+    monkeypatch,
+):
     preview = FakePreview(ready=False)
     cam, events, _ = running(monkeypatch, preview)
-    cam._toggle_preview()
+    settle(cam, True)
     assert preview_states(events) == ["starting", "closed"]
     assert preview.stopped
     assert "did not produce a picture" in logs(events)[-1]
+    assert cam._preview_busy is False
 
 
-def test_preview_toggles_are_ignored_while_one_is_changing(monkeypatch):
+def test_a_crash_while_reconciling_does_not_wedge_the_preview(monkeypatch):
     cam, events, _ = running(monkeypatch, FakePreview())
-    cam._preview_busy = True
-    cam.toggle_preview()
-    assert events == []
+
+    def boom():
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(cam, "_start_preview", boom)
+    settle(cam, True)
+    assert "The preview failed: RuntimeError" in logs(events)[-1]
+    assert cam._preview_busy is False
+
+
+def test_asking_for_a_preview_reconciles_in_the_background(monkeypatch):
+    preview = FakePreview()
+    cam, events, _ = running(monkeypatch, preview)
+    cam.set_preview_wanted(True)
+    for _ in range(200):
+        if "open" in preview_states(events):
+            break
+        time.sleep(0.01)
+    assert preview_states(events) == ["starting", "open"]
 
 
 # ───────────────────────────────────────────────────────────────| Confirming |──
