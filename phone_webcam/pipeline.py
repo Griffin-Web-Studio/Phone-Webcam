@@ -140,6 +140,8 @@ class Pipeline:
         self._frame_size = width * height * 3 // 2
         self._latest: bytes | bytearray = black_frame(width, height)
         self._turn = (0, False)
+        self._slate: bytes | bytearray | None = None
+        self._slate_mirror = True
         self._preview: PreviewSink | None = None
         self._preview_every = 1
         self._preview_fps: int | None = None
@@ -156,6 +158,20 @@ class Pipeline:
         if rotation not in ROTATIONS:
             raise ValueError(f"rotation must be one of {ROTATIONS}")
         self._turn = (rotation, mirror)
+
+    def set_slate(
+        self, frame: bytes | bytearray | None, mirror: bool = True
+    ) -> None:
+        """Show a cover frame instead of the camera, or the camera with None.
+
+        The camera keeps being read behind the cover, so taking it off shows
+        the live picture at once. The rotation is there to put the camera right
+        way up, and a cover is drawn right way up already, so it is never
+        rotated. With `mirror` it is mirrored like the picture, for apps that
+        need the output flipped, without it the cover is shown as drawn.
+        """
+        self._slate_mirror = mirror
+        self._slate = frame
 
     def set_preview(
         self, sink: PreviewSink | None, preview_fps: int | None = None
@@ -299,7 +315,12 @@ class Pipeline:
         deadline = time.monotonic()
         count = 0
         while not self._stopping.is_set():
-            planes = self._turned(self._latest)
+            slate = self._slate
+            if slate is None:
+                planes = self._turned(self._latest)
+            else:
+                mirror = self._turn[1] and self._slate_mirror
+                planes = self._turned(slate, (0, mirror))
             try:
                 for plane in planes:
                     stream.write(memoryview(np.ascontiguousarray(plane)))
@@ -318,8 +339,10 @@ class Pipeline:
             else:
                 deadline = time.monotonic()
 
-    def _turned(self, frame: bytes | bytearray) -> Planes:
-        rotation, mirror = self._turn
+    def _turned(
+        self, frame: bytes | bytearray, turn: tuple[int, bool] | None = None
+    ) -> Planes:
+        rotation, mirror = turn or self._turn
         luma, cb, cr = split_planes(frame, self._width, self._height)
         if rotation == 0 and not mirror:
             return luma, cb, cr

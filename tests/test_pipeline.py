@@ -255,3 +255,97 @@ def test_changing_the_frame_rate_takes_effect_and_keeps_the_preview_rate():
     live.set_fps(60)
     assert live._fps == 60
     assert live._preview_every == 2
+
+
+# ───────────────────────────────────────────────────────────────────| Slate |──
+def slate_frame(value=200):
+    """A frame that is one flat colour, so it is easy to tell from the camera."""
+    return bytes([value]) * (W * H * 3 // 2)
+
+
+def written_frames(writer):
+    size = W * H * 3 // 2
+    data = bytes(writer.stdin.written)
+    return [data[i : i + size] for i in range(0, len(data) - size + 1, size)]
+
+
+def run_with_slate(
+    monkeypatch, slate, mirror_cover=True, rotation=0, mirror=False
+):
+    writer = FakeProcess()
+    monkeypatch.setattr(
+        subprocess, "Popen", fake_popen(FakeProcess(bytes(frame())), writer)
+    )
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H, fps=500)
+    live.set_orientation(rotation, mirror)
+    live.set_slate(slate, mirror_cover)
+    live.start()
+    live._reader_threads[0].join(timeout=5)
+    time.sleep(0.1)
+    live.stop()
+    return written_frames(writer)
+
+
+def marked_slate():
+    """A dark frame with a bright band across the top and down the left."""
+    plain = bytearray(slate_frame(16))
+    luma = np.frombuffer(plain, np.uint8)[: W * H].reshape(H, W)
+    luma[:2, :] = 235
+    luma[:, :2] = 235
+    return bytes(plain)
+
+
+def luma_of(frame_bytes):
+    return np.frombuffer(frame_bytes, np.uint8)[: W * H].reshape(H, W)
+
+
+def test_a_slate_is_written_instead_of_the_camera(monkeypatch):
+    frames = run_with_slate(monkeypatch, slate_frame())
+    assert frames
+    assert all(f == slate_frame() for f in frames)
+    assert bytes(frame()) not in frames
+
+
+def test_without_a_slate_the_camera_is_written(monkeypatch):
+    frames = run_with_slate(monkeypatch, None)
+    assert bytes(frame()) in frames
+
+
+def test_a_slate_is_never_rotated(monkeypatch):
+    for mirror_cover in (True, False):
+        out = run_with_slate(
+            monkeypatch, marked_slate(), mirror_cover, rotation=180
+        )
+        luma = luma_of(out[-1])
+        assert luma[0, W // 2] == 235 and luma[-1, W // 2] == 16, mirror_cover
+
+
+def test_a_slate_is_mirrored_with_the_picture_when_asked(monkeypatch):
+    out = run_with_slate(
+        monkeypatch, marked_slate(), mirror_cover=True, mirror=True
+    )
+    luma = luma_of(out[-1])
+    assert luma[H // 2, -1] == 235 and luma[H // 2, 0] == 16  # band moved right
+
+
+def test_a_slate_is_left_as_drawn_when_not_mirroring_it(monkeypatch):
+    out = run_with_slate(
+        monkeypatch, marked_slate(), mirror_cover=False, mirror=True
+    )
+    luma = luma_of(out[-1])
+    assert luma[H // 2, 0] == 235 and luma[H // 2, -1] == 16  # band stays left
+
+
+def test_the_cover_is_not_mirrored_when_the_picture_is_not(monkeypatch):
+    out = run_with_slate(monkeypatch, marked_slate(), mirror_cover=True)
+    luma = luma_of(out[-1])
+    assert luma[H // 2, 0] == 235 and luma[H // 2, -1] == 16
+
+
+def test_taking_the_slate_off_shows_the_live_picture_at_once():
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H)
+    live._latest = bytearray(frame())
+    live.set_slate(slate_frame())
+    assert live._slate is not None
+    live.set_slate(None)
+    assert live._slate is None and bytes(live._latest) == bytes(frame())
