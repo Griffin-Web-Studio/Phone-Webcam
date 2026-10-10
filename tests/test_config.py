@@ -21,3 +21,14 @@ def test_missing_or_broken_prefs_are_empty(tmp_path):
 def test_prefs_follow_xdg_config_home(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert config.prefs_path() == tmp_path / "phone-webcam" / "prefs.json"
+
+
+def test_update_prefs_keeps_the_other_choices(tmp_path):
+    path = tmp_path / "prefs.json"
+    config.save_prefs({"rotation": 90, "settings": {"fps": 60}}, path)
+    config.update_prefs({"mirror": True}, path)
+    assert config.load_prefs(path) == {
+        "rotation": 90,
+        "settings": {"fps": 60},
+        "mirror": True,
+    }

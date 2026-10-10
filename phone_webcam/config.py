@@ -43,3 +43,8 @@ def save_prefs(prefs: dict, path: Path | None = None) -> None:
         target.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def update_prefs(changes: dict, path: Path | None = None) -> None:
+    """Change some saved choices and keep the others."""
+    save_prefs({**load_prefs(path), **changes}, path)
