@@ -13,6 +13,8 @@ const statusEl = byId("status", HTMLElement);
 const toggleBtn = byId("toggle", HTMLButtonElement);
 const logEl = byId("log", HTMLElement);
 const copyLog = byId("copy-log", HTMLButtonElement);
+const clearLog = byId("clear-log", HTMLButtonElement);
+const debugLog = byId("debug-log", HTMLInputElement);
 const rotateLeft = byId("rotate-left", HTMLButtonElement);
 const rotateRight = byId("rotate-right", HTMLButtonElement);
 const mirrorBtn = byId("mirror", HTMLButtonElement);
@@ -94,12 +96,20 @@ function setState(state) {
 
 /**
  * @param {string} line
+ * @param {boolean} [debug] detail, shown quieter than the messages
  */
-function addLog(line) {
+function addLog(line, debug = false) {
   // Only follow the output while the reader is already at the bottom.
   const gap = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight;
   const atBottom = gap < 8;
-  logEl.append(`${line}\n`);
+  if (debug) {
+    const span = document.createElement("span");
+    span.className = "debug-line";
+    span.textContent = `${line}\n`;
+    logEl.append(span);
+  } else {
+    logEl.append(`${line}\n`);
+  }
   if (atBottom) logEl.scrollTop = logEl.scrollHeight;
 }
 
@@ -316,7 +326,10 @@ window.onWebcamEvent = (event) => {
       setState(event.state);
       break;
     case "log":
-      addLog(event.line);
+      addLog(event.line, event.debug === true);
+      break;
+    case "debug":
+      debugLog.checked = event.on;
       break;
     case "orientation":
       showOrientation(event);
@@ -394,6 +407,12 @@ copyLog.addEventListener("click", async () => {
   }
   setTimeout(() => (copyLog.textContent = "Copy"), 1500);
 });
+clearLog.addEventListener("click", () => {
+  logEl.textContent = "";
+});
+debugLog.addEventListener("change", () =>
+  window.pywebview.api.set_debug(debugLog.checked),
+);
 window.addEventListener("focus", syncPreview);
 window.addEventListener("blur", syncPreview);
 document.addEventListener("visibilitychange", syncPreview);
@@ -469,6 +488,7 @@ window.addEventListener("pywebviewready", async () => {
   showSettings(await window.pywebview.api.get_settings());
   showCover(await window.pywebview.api.get_cover());
   showShutter(await window.pywebview.api.get_shutter());
+  debugLog.checked = await window.pywebview.api.get_debug();
   const side = await window.pywebview.api.get_side_width();
   if (side > 0) setSideWidth(side);
   showPhone(await window.pywebview.api.get_phone());

@@ -61,7 +61,8 @@ export interface PreviewEvent {
 
 export type WebcamEvent =
   | { type: "state"; state: string }
-  | { type: "log"; line: string }
+  | { type: "log"; line: string; debug?: boolean }
+  | { type: "debug"; on: boolean }
   | ({ type: "orientation" } & Orientation)
   | PreviewEvent
   | { type: "camera"; id: string }
@@ -84,6 +85,8 @@ export interface Api {
   get_state(): Promise<string>;
   get_phone(): Promise<PhoneState>;
   copy_text(text: string): Promise<void>;
+  get_debug(): Promise<boolean>;
+  set_debug(on: boolean): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   list_cameras(): Promise<CameraInfo[]>;

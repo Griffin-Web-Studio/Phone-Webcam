@@ -498,6 +498,26 @@ input[type="text"] {
   margin-bottom: -4px;
 }
 
+.log-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-tools .check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Detail for working out a problem, quieter than the messages themselves. */
+.debug-line {
+  color: var(--muted, #9aa8c2);
+}
+
 .log-head h2 {
   margin: 0;
   font-size: 14px;
