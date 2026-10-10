@@ -19,6 +19,10 @@ dev = [
   "CairoSVG>=2.7.1",
   "pytest>=8",
 ]
+build = [
+    "nuitka>=4.2.2",
+    "zstandard>=0.25.0",
+]
 
 [tool.black]
 line-length = 80
