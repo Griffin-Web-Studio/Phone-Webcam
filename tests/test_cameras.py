@@ -43,8 +43,15 @@ def test_parse_of_nonsense_is_empty():
     assert cameras.parse_cameras("ERROR: no device\n") == []
 
 
-def test_label_names_facing_id_and_best_size():
-    assert cameras.parse_cameras(SAMPLE)[1].label == "Front camera 1, 3264x2448"
+def test_label_names_facing_id_best_size_and_the_frame_rate_limit():
+    label = cameras.parse_cameras(SAMPLE)[1].label
+    assert label == "Front camera 1, 3264x2448, up to 30 fps"
+
+
+def test_label_leaves_the_rate_out_when_it_is_not_known():
+    assert cameras.Camera("0", "back", ("1920x1080",)).label == (
+        "Back camera 0, 1920x1080"
+    )
 
 
 def test_pick_size_takes_1080p_when_offered():
@@ -103,3 +110,56 @@ def test_pick_fps_takes_the_slowest_if_all_are_too_fast():
 
 def test_pick_fps_trusts_the_wish_when_nothing_is_known():
     assert cameras.pick_fps((), 60) == 60
+
+
+# A Samsung Galaxy S10+ with scrcpy 5.0.1, as the phone really printed it. The
+# frame rates are in braces, not square brackets, which the app once did not read.
+REAL_S10 = """\
+scrcpy 5.0.1 <https://github.com/Genymobile/scrcpy>
+INFO: ADB device found:
+INFO:     -->   (usb)  RF8MB08632Z                     device  SM_G975F
+[server] INFO: Device: [samsung] samsung SM-G975F (Android 16)
+[server] INFO: List of cameras:
+    --camera-id=0    (back, 4032x3024, fps={15, 20, 24, 30}, zoom-range=[1, 8])
+    --camera-id=1    (front, 3648x2736, fps={15, 20, 24, 30}, zoom-range=[1, 4])
+    --camera-id=2    (back, 4608x3456, fps={15, 20, 24, 30}, zoom-range=[1, 8])
+    --camera-id=3    (front, 3216x2208, fps={15, 20, 24, 30}, zoom-range=[1, 4])
+    --camera-id=52    (back, 4032x3024, fps={15, 20, 24, 30}, zoom-range=[1, 8])
+"""
+
+
+def test_the_real_s10_listing_is_read_in_full():
+    found = cameras.parse_cameras(REAL_S10)
+    assert [(c.id, c.facing) for c in found] == [
+        ("0", "back"),
+        ("1", "front"),
+        ("2", "back"),
+        ("3", "front"),
+        ("52", "back"),
+    ]
+    assert [c.sizes for c in found][0] == ("4032x3024",)
+    for camera in found:
+        assert camera.fps == (15, 20, 24, 30)
+
+
+def test_a_request_for_60_fps_is_held_to_30_on_every_s10_camera():
+    for camera in cameras.parse_cameras(REAL_S10):
+        assert cameras.pick_fps(camera.fps, 60) == 30
+
+
+def test_the_labels_of_the_s10_cameras_show_their_limit():
+    labels = [c.label for c in cameras.parse_cameras(REAL_S10)]
+    assert labels[0] == "Back camera 0, 4032x3024, up to 30 fps"
+    assert labels[4] == "Back camera 52, 4032x3024, up to 30 fps"
+
+
+def test_both_ways_of_writing_the_rates_are_read():
+    braces = "--camera-id=7    (back, 1920x1080, fps={15, 30})"
+    brackets = "--camera-id=7    (back, 1920x1080, fps=[15, 30])"
+    assert cameras.parse_cameras(braces)[0].fps == (15, 30)
+    assert cameras.parse_cameras(brackets)[0].fps == (15, 30)
+
+
+def test_a_header_without_rates_still_parses():
+    found = cameras.parse_cameras("--camera-id=7    (back, 1920x1080)")
+    assert found[0].fps == () and found[0].sizes == ("1920x1080",)

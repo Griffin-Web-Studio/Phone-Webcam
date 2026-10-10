@@ -14,7 +14,8 @@ MAX_HEIGHT = 1080
 
 CAMERA_LINE = re.compile(
     r"--camera-id=(?P<id>\S+)\s+\((?P<facing>[^,)]+)(?:,\s*(?P<size>\d+x\d+))?"
-    r"(?:,\s*fps=\[(?P<fps>[\d,\s]*)\])?"
+    # scrcpy 5 writes the rates in braces, fps={15, 30}, older ones in brackets.
+    r"(?:,\s*fps=[\[{](?P<fps>[\d,\s]*)[\]}])?"
 )
 SIZE_LINE = re.compile(r"^\s*-\s*(?P<size>\d+x\d+)\s*$")
 
@@ -33,7 +34,9 @@ class Camera:
     def label(self) -> str:
         best = self.sizes[0] if self.sizes else ""
         detail = f", {best}" if best else ""
-        return f"{self.facing.capitalize()} camera {self.id}{detail}"
+        # The limit is worth showing, a camera cannot be asked for more.
+        rate = f", up to {max(self.fps)} fps" if self.fps else ""
+        return f"{self.facing.capitalize()} camera {self.id}{detail}{rate}"
 
 
 def parse_cameras(text: str) -> list[Camera]:
