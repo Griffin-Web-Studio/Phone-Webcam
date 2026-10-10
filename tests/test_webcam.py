@@ -815,3 +815,68 @@ def test_a_camera_with_no_known_limit_is_asked_for_what_was_chosen(monkeypatch):
     cam._stream("/dev/video0")  # the default camera, nothing is known about it
     assert not any("at most" in line for line in logs(events))
     assert any("--camera-fps=60" in line for line in logs(events))
+
+
+# ───────────────────────────────────────────────────────| The default camera |──
+def phone_with(*phone_cameras):
+    return {c.id: c for c in phone_cameras}
+
+
+def test_the_default_camera_is_held_to_the_first_cameras_limit(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=60)
+    cam._cameras = phone_with(S10_BACK)
+    cam._stream("/dev/video0")  # nothing chosen, so scrcpy picks
+    out = logs(events)
+    assert (
+        "The default camera, taken to be camera 0, offers at most 30 fps, "
+        "so 30 is asked for and not 60." in out
+    )
+    command = next(line for line in out if line.startswith("  scrcpy"))
+    assert "--camera-fps=30" in command
+    assert (
+        "--camera-id" not in command
+    )  # which camera is recorded stays scrcpy's
+
+
+def test_the_default_camera_is_the_first_listed_not_the_most_capable(
+    monkeypatch,
+):
+    first = cameras.Camera("0", "back", ("4032x3024",), (15, 30))
+    second = cameras.Camera("1", "front", ("3648x2736",), (15, 30, 60))
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=60)
+    cam._cameras = phone_with(first, second)
+    cam._stream("/dev/video0")
+    assert any("--camera-fps=30" in line for line in logs(events))
+
+
+def test_a_chosen_camera_still_uses_its_own_limits_not_the_first_ones(
+    monkeypatch,
+):
+    slow = cameras.Camera("0", "back", ("4032x3024",), (15, 30))
+    fast = cameras.Camera("1", "front", ("3648x2736",), (15, 30, 60))
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=60)
+    cam._cameras = phone_with(slow, fast)
+    cam._camera_id = "1"
+    cam._stream("/dev/video0")
+    assert any("--camera-fps=60" in line for line in logs(events))
+    assert not any("at most" in line for line in logs(events))
+
+
+def test_the_default_camera_is_left_alone_when_the_phones_list_is_unknown(
+    monkeypatch,
+):
+    cam, events = make(monkeypatch)
+    cam._settings = Settings(fps=60)
+    cam._cameras = {}
+    cam._stream("/dev/video0")
+    assert any("--camera-fps=60" in line for line in logs(events))
+    assert not any("default camera, taken" in line for line in logs(events))
+
+
+def test_scrcpy_args_can_take_the_limits_of_a_camera_it_is_not_selecting():
+    args = webcam.scrcpy_args("/f", None, Settings(fps=60), S10_BACK)
+    assert "--camera-fps=30" in args
+    assert not any(a.startswith("--camera-id") for a in args)

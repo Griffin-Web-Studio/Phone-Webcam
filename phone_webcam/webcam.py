@@ -70,14 +70,16 @@ def scrcpy_args(
     fifo: str,
     camera: cameras.Camera | None = None,
     settings: Settings = Settings(),
+    limits: cameras.Camera | None = None,
 ) -> list[str]:
     """The scrcpy command line that records a phone camera into a FIFO.
 
     Without a camera, scrcpy picks its default one. The size and frame rate
-    are the settings, kept within what the chosen camera can do.
+    are the settings, kept within what a camera can do: the chosen one, or when
+    scrcpy is to choose, the one `limits` says it will probably be.
     """
     selection = [f"--camera-id={camera.id}"] if camera else []
-    size, fps = camera_request(camera, settings)
+    size, fps = camera_request(camera or limits, settings)
     return [
         "scrcpy",
         "--no-window",
@@ -624,6 +626,15 @@ class Webcam:
         """The chosen camera, if the phone has reported it."""
         return self._cameras.get(self._camera_id or "")
 
+    def _default_camera(self) -> cameras.Camera | None:
+        """The camera scrcpy picks when none is chosen, as far as can be told.
+
+        It takes the first camera of the phone's list, which is what it was on
+        the phone this was found on. Only the limits of that camera are used, to
+        hold the frame rate down. Which camera is recorded is still scrcpy's.
+        """
+        return next(iter(self._cameras.values()), None)
+
     def _stream(self, output: str) -> None:
         """Run scrcpy until it ends, restarting it to switch cameras."""
         fifo = make_fifo()
@@ -670,14 +681,20 @@ class Webcam:
         camera = self._camera()
         name = f"camera {camera.id}" if camera else "the default camera"
         self._log(f"Starting scrcpy on {name}...")
-        args = scrcpy_args(str(fifo), camera, self._settings)
+        assumed = None if camera else self._default_camera()
+        args = scrcpy_args(str(fifo), camera, self._settings, assumed)
         # The exact command, so a phone that misbehaves can be tried by hand with
         # the same options, and so a bug report shows what was asked for.
         self._log("  " + shlex.join(args))
-        _, fps = camera_request(camera, self._settings)
+        _, fps = camera_request(camera or assumed, self._settings)
         if fps != self._settings.fps:
+            which = (
+                "This camera"
+                if camera
+                else f"The default camera, taken to be camera {assumed.id},"
+            )
             self._log(
-                f"This camera offers at most {fps} fps, so {fps} is asked for "
+                f"{which} offers at most {fps} fps, so {fps} is asked for "
                 f"and not {self._settings.fps}."
             )
         try:
