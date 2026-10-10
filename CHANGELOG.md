@@ -1,3 +1,21 @@
+## v1.0.1 (2026-10-10)
+
+### Bug Fixes
+
+- add correct icons with new design
+- **pipeline**: count the camera's frame rate from its first picture
+- **webcam**: do not report the feed ending when a switch ends it
+- **webcam**: hold the default camera to the first camera's frame rate
+- **cameras**: read frame rates written in braces
+
+### Features
+
+- **ui**: add the debug toggle, clear button and dimmed debug lines
+- add a debug log and a --debug flag
+- **webcam**: explain a run that never sent a picture
+- **webcam**: fold repeated scrcpy messages
+- **webcam**: log the scrcpy command and any frame rate clamp
+
 ## v1.0.0 (2026-10-10)
 
 ### Bug Fixes

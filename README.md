@@ -6,7 +6,7 @@
 [![pipeline status](https://gitlab.com/griffin-web-studio/garage/phone-webcam/badges/main/pipeline.svg)](https://gitlab.com/griffin-web-studio/garage/phone-webcam/-/pipelines)
 [![coverage](https://img.shields.io/gitlab/pipeline-coverage/griffin-web-studio/garage/phone-webcam?branch=main&job_name=test&label=coverage)](https://gitlab.com/griffin-web-studio/garage/phone-webcam/-/jobs?name=test)
 
-# Phone Webcam (v1.0.0)
+# Phone Webcam (v1.0.1)
 
 The webcam in a laptop is rarely a good one, and the camera in your phone almost
 always is. Phone Webcam turns that camera into a virtual webcam that your video
@@ -55,7 +55,7 @@ and tells you what is missing.
 ## Installation
 
 Download the latest package from the
-[Releases page](https://gitlab.com/griffin-web-studio/garage/phone-webcam/-/releases/v1.0.0).
+[Releases page](https://gitlab.com/griffin-web-studio/garage/phone-webcam/-/releases/v1.0.1).
 
 ### Fedora
 
