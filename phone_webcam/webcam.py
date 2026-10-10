@@ -11,12 +11,14 @@ live, without restarting scrcpy or interrupting the output.
 
 import os
 import pty
+import platform
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -34,6 +36,8 @@ SIGTERM_EXIT = -15
 CAPTURE_FAILED = "Camera capture failed"
 # A long run of the same message is reported again after this many repeats.
 REPEAT_REPORT = 100
+DEBUG_PREFIX = "[debug] "
+TOOL_TIMEOUT = 5
 CONFIRM_TIMEOUT = 300
 PREVIEW_TIMEOUT = 8
 
@@ -124,6 +128,22 @@ def clean_line(raw: str) -> str:
     return pieces[-1].rstrip() if pieces else ""
 
 
+def tool_banner(command: list[str]) -> str:
+    """The first line a tool prints for its version, or why there is none."""
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=TOOL_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return "could not be run"
+    lines = (result.stdout or result.stderr).strip().splitlines()
+    return lines[0].strip() if lines else "printed nothing"
+
+
 class Repeats:
     """Passes lines on, folding a run of near-identical ones into the first.
 
@@ -178,6 +198,7 @@ class Webcam:
         mirror: bool = False,
         settings: Settings | None = None,
         cover: SlateSettings | None = None,
+        debugging: bool = False,
     ) -> None:
         self._emit = emit
         self._settings = settings or Settings()
@@ -199,6 +220,8 @@ class Webcam:
         self._switched = False
         self._got_frame = False
         self._capture_failures = 0
+        self._debugging = debugging
+        self._scrcpy_started = 0.0
         self._stop_requested = False
         self._answer = False
         self._answered = threading.Event()
@@ -253,6 +276,19 @@ class Webcam:
         if live is not None:
             live.set_orientation(rotation, mirror)
         self._emit({"type": "orientation", **self.orientation()})
+
+    def debugging(self) -> bool:
+        return self._debugging
+
+    def set_debugging(self, on: bool) -> None:
+        """Turn the detailed log on or off, for runs and lists from now on."""
+        self._debugging = on
+        self._emit({"type": "debug", "on": on})
+        if on:
+            self._debug(
+                "Debugging is on. Everything below is detail for working out "
+                "a problem, and it includes the phone's serial number."
+            )
 
     def answer(self, yes: bool) -> None:
         """Reply to a confirmation the worker is waiting on."""
@@ -341,11 +377,35 @@ class Webcam:
 
     def list_cameras(self) -> list[dict]:
         """Ask the phone for its cameras, keeping them for later switches."""
-        found = cameras.list_cameras()
+        text = cameras.read_listing()
+        found = cameras.parse_cameras(text)
+        self._report_listing(text, found)
         self._cameras = {camera.id: camera for camera in found}
         return [
             {"id": c.id, "label": c.label, "facing": c.facing} for c in found
         ]
+
+    def _report_listing(self, text: str, found: list[cameras.Camera]) -> None:
+        """Say what the phone's list contained and what was made of it."""
+        unread = cameras.unread_lines(text)
+        if unread:
+            self._log(
+                f"{len(unread)} camera lines from scrcpy could not be read, "
+                "so those cameras are missing or have no limits. Turn on "
+                "debugging to see them."
+            )
+        if not self._debugging:
+            return
+        self._debug("scrcpy --list-cameras printed:")
+        for line in text.strip().splitlines():
+            self._debug("  | " + line)
+        for camera in found:
+            self._debug(
+                f"read camera {camera.id}: {camera.facing}, sizes "
+                f"{list(camera.sizes)}, fps {list(camera.fps)}"
+            )
+        for line in unread:
+            self._debug(f"not understood: {line}")
 
     def camera(self) -> str:
         """The chosen camera's id, an empty string for the default."""
@@ -420,6 +480,30 @@ class Webcam:
 
     def _log(self, line: str) -> None:
         self._emit({"type": "log", "line": line})
+
+    def _debug(self, line: str) -> None:
+        """Log detail, but only while debugging is on."""
+        if self._debugging:
+            self._emit(
+                {"type": "log", "line": DEBUG_PREFIX + line, "debug": True}
+            )
+
+    def _debug_environment(self) -> None:
+        """Note the machine, the tools and the phone this run happens on."""
+        if not self._debugging:
+            return
+        self._debug(
+            f"system: {platform.platform()}, Python {platform.python_version()}"
+        )
+        for name, command in (
+            ("scrcpy", ["scrcpy", "--version"]),
+            ("adb", ["adb", "version"]),
+            ("ffmpeg", ["ffmpeg", "-version"]),
+        ):
+            self._debug(f"{name}: {tool_banner(command)}")
+        properties = phone.read_properties()
+        for key in phone.PROPERTIES:
+            self._debug(f"phone {key}: {properties.get(key, 'unknown')}")
 
     def _reconcile_preview(self) -> None:
         """Bring the preview in line with what is wanted, off this thread."""
@@ -500,6 +584,11 @@ class Webcam:
         """The first picture has arrived, so the webcam is really running."""
         self._got_frame = True
         self._switched = False
+        self._debug(
+            "The first picture arrived "
+            f"{time.monotonic() - self._scrcpy_started:.1f} s after scrcpy "
+            "started."
+        )
         with self._lock:
             if self.state in (STARTING, SWITCHING, APPLYING):
                 self._set_state(RUNNING)
@@ -587,6 +676,7 @@ class Webcam:
 
     def _prepare(self) -> str | None:
         """Check the phone, set up the device, find its node."""
+        self._debug_environment()
         status = phone.check_phone()
         if not status.ready:
             self._log(phone.MESSAGES[status.state])
@@ -610,6 +700,7 @@ class Webcam:
             width,
             height,
             self._settings.fps,
+            self._debug,
         )
         live.set_orientation(*self._turn)
         self._slates = self._draw_slates(width, height)
@@ -764,12 +855,22 @@ class Webcam:
                 process.terminate()
         repeats = Repeats(self._log)
         self._capture_failures = 0
+        self._scrcpy_started = time.monotonic()
         for line in lines:
             if CAPTURE_FAILED in line:
                 self._capture_failures += 1
-            repeats.add(line)
+            # Debugging shows every line, as the folding hides how often.
+            if self._debugging:
+                self._log(line)
+            else:
+                repeats.add(line)
         repeats.flush()
         code = process.wait()
+        self._debug(
+            f"scrcpy ended with code {code} after "
+            f"{time.monotonic() - self._scrcpy_started:.1f} s, "
+            f"{self._capture_failures} capture failures."
+        )
         # An ending we asked for is SIGTERM, which is not an error.
         if code == SIGTERM_EXIT and (self._stop_requested or self._switching):
             return 0

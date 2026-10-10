@@ -3,6 +3,7 @@
 Standard library only.
 """
 
+import re
 import subprocess
 import threading
 from collections.abc import Callable
@@ -64,6 +65,42 @@ def check_phone(timeout: float = 10) -> Phone:
     except OSError, subprocess.TimeoutExpired:
         return Phone(UNAVAILABLE)
     return parse_devices(proc.stdout)
+
+
+PROPERTY_LINE = re.compile(r"^\[(?P<key>[^\]]+)\]: \[(?P<value>.*)\]$")
+# What is worth knowing about a phone when a camera misbehaves.
+PROPERTIES = (
+    "ro.product.manufacturer",
+    "ro.product.model",
+    "ro.build.version.release",
+    "ro.build.version.sdk",
+    "ro.build.display.id",
+)
+
+
+def parse_properties(output: str) -> dict[str, str]:
+    """Read `adb shell getprop` output, keeping the properties of interest."""
+    found: dict[str, str] = {}
+    for line in output.splitlines():
+        match = PROPERTY_LINE.match(line.strip())
+        if match and match["key"] in PROPERTIES:
+            found[match["key"]] = match["value"]
+    return found
+
+
+def read_properties(timeout: float = 10) -> dict[str, str]:
+    """Ask the phone about itself, empty if it does not answer."""
+    try:
+        proc = subprocess.run(
+            ["adb", "shell", "getprop"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return {}
+    return parse_properties(proc.stdout)
 
 
 # ─────────────────────────────────────────────────────────────────| Monitor |──

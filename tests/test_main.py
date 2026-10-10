@@ -157,7 +157,9 @@ def test_simulate_flag_reaches_the_window(monkeypatch):
     seen = {}
     monkeypatch.setattr(deps, "run_preflight", lambda: [ok("display")])
     monkeypatch.setattr(
-        main, "run_window", lambda simulate=(): seen.update(keys=simulate) or 0
+        main,
+        "run_window",
+        lambda simulate=(), debug=False: seen.update(keys=simulate) or 0,
     )
     main.main(["--simulate-missing", "scrcpy,adb"])
     assert seen["keys"] == ("scrcpy", "adb")
@@ -407,3 +409,17 @@ def test_choosing_without_a_window_does_nothing():
     from phone_webcam.api import Api
 
     assert Api().choose_cover_svg() == {"ok": False, "message": ""}
+
+
+def test_debug_flag_reaches_the_window(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(deps, "run_preflight", lambda: [ok("display")])
+    monkeypatch.setattr(
+        main,
+        "run_window",
+        lambda simulate=(), debug=False: seen.update(debug=debug) or 0,
+    )
+    main.main(["--debug"])
+    assert seen["debug"] is True
+    main.main([])
+    assert seen["debug"] is False

@@ -44,7 +44,7 @@ def fail(results: list[deps.CheckResult], heading: str) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────| Window |──
-def run_window(simulate: tuple[str, ...] = ()) -> int:
+def run_window(simulate: tuple[str, ...] = (), debug: bool = False) -> int:
     """Open the window, gates first. Only reached once preflight has passed."""
     platform = deps.pick_qt_platform()
     if platform.fell_back and platform.name:
@@ -55,7 +55,7 @@ def run_window(simulate: tuple[str, ...] = ()) -> int:
 
     from phone_webcam.api import Api
 
-    api = Api(simulate)
+    api = Api(simulate, debug)
     window = webview.create_window(
         config.app_name(),
         url=str(WEB_DIR / "gate.html"),
@@ -95,6 +95,11 @@ def main(argv: list[str] | None = None) -> int:
         help="pretend these system checks fail, comma separated, one or more "
         f"of: {', '.join(deps.SYSTEM_KEYS)}",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="turn the detailed log on and print the log to the terminal too",
+    )
     args = parser.parse_args(argv)
     simulate = tuple(k for k in args.simulate_missing.split(",") if k)
     unknown = [k for k in simulate if k not in deps.SYSTEM_KEYS]
@@ -112,4 +117,4 @@ def main(argv: list[str] | None = None) -> int:
         fail(preflight, "Cannot open the window, the GUI stack is incomplete.")
         return EXIT_PREFLIGHT
 
-    return run_window(simulate)
+    return run_window(simulate, args.debug)

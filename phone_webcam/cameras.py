@@ -102,8 +102,21 @@ def pick_fps(supported: tuple[int, ...], wanted: int) -> int:
     return max(below) if below else min(supported)
 
 
-def list_cameras(timeout: float = 30) -> list[Camera]:
-    """Ask scrcpy for the phone's cameras, empty if it cannot."""
+def unread_lines(text: str) -> list[str]:
+    """The lines that mention a camera id but that the parser did not read.
+
+    scrcpy's wording changes between versions, and a line that stops matching
+    would otherwise just make a camera, or its limits, quietly vanish.
+    """
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if "--camera-id=" in line and not CAMERA_LINE.search(line)
+    ]
+
+
+def read_listing(timeout: float = 30) -> str:
+    """What `scrcpy --list-cameras` prints, empty if it cannot be run."""
     try:
         proc = subprocess.run(
             ["scrcpy", "--list-cameras"],
@@ -113,5 +126,10 @@ def list_cameras(timeout: float = 30) -> list[Camera]:
             stdin=subprocess.DEVNULL,
         )
     except OSError, subprocess.TimeoutExpired:
-        return []
-    return parse_cameras(proc.stdout + "\n" + proc.stderr)
+        return ""
+    return proc.stdout + "\n" + proc.stderr
+
+
+def list_cameras(timeout: float = 30) -> list[Camera]:
+    """Ask scrcpy for the phone's cameras, empty if it cannot."""
+    return parse_cameras(read_listing(timeout))

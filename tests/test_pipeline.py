@@ -373,3 +373,38 @@ def test_restarting_the_reader_lifts_the_expectation_again(monkeypatch):
     live.restart_reader()
     assert not live._reader_quiet.is_set()  # a real end is reported again
     live.stop()
+
+
+# ──────────────────────────────────────────────────────────────| Debugging |──
+def test_debugging_shows_the_commands_and_what_ffmpeg_said(monkeypatch):
+    writer = FakeProcess()
+    reader = FakeProcess(bytes(frame()), error=b"Invalid data found\n")
+    monkeypatch.setattr(subprocess, "Popen", fake_popen(reader, writer))
+    seen = []
+    live = pipeline.Pipeline(
+        "src", "out", lambda line: None, None, W, H, fps=200, debug=seen.append
+    )
+    live.start()
+    live._reader_threads[0].join(timeout=5)
+    live._reader_threads[1].join(timeout=5)
+    live.stop()
+    assert any(line.startswith("ffmpeg writer: ffmpeg") for line in seen)
+    assert any(line.startswith("ffmpeg reader: ffmpeg") for line in seen)
+    assert "ffmpeg reader: Invalid data found" in seen
+
+
+def test_debugging_reports_the_rate_the_phone_really_sends(monkeypatch):
+    monkeypatch.setattr(pipeline, "RATE_REPORT_SECONDS", 0.0)
+    seen = []
+    reader = FakeProcess(bytes(frame()) * 2)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen(reader, FakeProcess()))
+    live = pipeline.Pipeline(
+        "src", "out", lambda line: None, None, W, H, fps=200, debug=seen.append
+    )
+    live.start()
+    live._reader_threads[0].join(timeout=5)
+    live.stop()
+    assert any(
+        "The phone sent" in line and "200 per second is being output" in line
+        for line in seen
+    )

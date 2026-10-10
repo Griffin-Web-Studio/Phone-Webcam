@@ -163,3 +163,33 @@ def test_both_ways_of_writing_the_rates_are_read():
 def test_a_header_without_rates_still_parses():
     found = cameras.parse_cameras("--camera-id=7    (back, 1920x1080)")
     assert found[0].fps == () and found[0].sizes == ("1920x1080",)
+
+
+# ────────────────────────────────────────────────────────| Unread lines |──
+def test_lines_the_parser_cannot_read_are_reported():
+    text = (
+        "--camera-id=0    (back, 4000x3000, fps={30})\n"
+        "--camera-id=1    something new and unexpected\n"
+        "    - 1920x1080\n"
+    )
+    assert cameras.unread_lines(text) == [
+        "--camera-id=1    something new and unexpected"
+    ]
+
+
+def test_every_line_of_a_normal_listing_is_read():
+    assert cameras.unread_lines(SAMPLE) == []
+
+
+def test_the_listing_is_what_scrcpy_printed_on_both_streams(monkeypatch):
+    done = subprocess.CompletedProcess([], 0, "out", "err")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: done)
+    assert cameras.read_listing() == "out\nerr"
+
+
+def test_the_listing_is_empty_when_scrcpy_is_missing(monkeypatch):
+    def gone(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(subprocess, "run", gone)
+    assert cameras.read_listing() == ""

@@ -6,6 +6,7 @@ turn is applied per frame, so changing it never interrupts the output. Frames
 stay in planar YUV 4:2:0, which is half the size of RGB.
 """
 
+import shlex
 import subprocess
 import threading
 import time
@@ -23,6 +24,7 @@ ROTATIONS = (0, 90, 180, 270)
 # Black in YUV: luma 16, both chroma planes at the neutral 128.
 BLACK = (16, 128, 128)
 
+RATE_REPORT_SECONDS = 5.0
 FFMPEG_QUIET = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
 
 
@@ -129,10 +131,12 @@ class Pipeline:
         width: int = WIDTH,
         height: int = HEIGHT,
         fps: int = FPS,
+        debug: Callable[[str], None] | None = None,
     ) -> None:
         self._source = source
         self._output = output
         self._log = log
+        self._debug = debug or (lambda line: None)
         self._on_first_frame = on_first_frame
         self._width = width
         self._height = height
@@ -196,16 +200,16 @@ class Pipeline:
 
     def start(self) -> None:
         size = f"{self._width}x{self._height}"
+        command = [
+            *FFMPEG_QUIET,
+            *("-f", "rawvideo", "-pix_fmt", "yuv420p"),
+            *("-video_size", size, "-framerate", str(self._fps)),
+            *("-i", "-", "-f", "v4l2", "-pix_fmt", "yuv420p"),
+            self._output,
+        ]
+        self._debug("ffmpeg writer: " + shlex.join(command))
         self._writer = subprocess.Popen(
-            [
-                *FFMPEG_QUIET,
-                *("-f", "rawvideo", "-pix_fmt", "yuv420p"),
-                *("-video_size", size, "-framerate", str(self._fps)),
-                *("-i", "-", "-f", "v4l2", "-pix_fmt", "yuv420p"),
-                self._output,
-            ],
-            stdin=subprocess.PIPE,
-            bufsize=0,
+            command, stdin=subprocess.PIPE, bufsize=0
         )
         thread = threading.Thread(target=self._write_loop, daemon=True)
         thread.start()
@@ -215,16 +219,18 @@ class Pipeline:
     def _start_reader(self) -> None:
         # Opening the FIFO waits for scrcpy to open its end, which is fine,
         # and a stop wakes it by ending the process.
+        command = [
+            "ffmpeg",
+            *("-hide_banner", "-loglevel", "fatal"),
+            *("-fflags", "nobuffer", "-flags", "low_delay"),
+            *("-i", self._source),
+            *("-vf", self._fit_filter()),
+            *("-fps_mode", "passthrough"),
+            *("-pix_fmt", "yuv420p", "-f", "rawvideo", "-"),
+        ]
+        self._debug("ffmpeg reader: " + shlex.join(command))
         reader = subprocess.Popen(
-            [
-                "ffmpeg",
-                *("-hide_banner", "-loglevel", "fatal"),
-                *("-fflags", "nobuffer", "-flags", "low_delay"),
-                *("-i", self._source),
-                *("-vf", self._fit_filter()),
-                *("-fps_mode", "passthrough"),
-                *("-pix_fmt", "yuv420p", "-f", "rawvideo", "-"),
-            ],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
@@ -295,10 +301,13 @@ class Pipeline:
             text = raw.decode(errors="replace").strip()
             if text:
                 self._last_error = text
+                self._debug(f"ffmpeg reader: {text}")
 
     def _read_loop(self, reader: subprocess.Popen[bytes]) -> None:
         stream = reader.stdout  # type: ignore[union-attr]
         first = True
+        frames = 0
+        since = time.monotonic()
         while not self._stopping.is_set():
             frame = bytearray(self._frame_size)
             view = memoryview(frame)
@@ -315,6 +324,15 @@ class Pipeline:
                     return
                 got += count
             self._latest = frame
+            frames += 1
+            elapsed = time.monotonic() - since
+            if elapsed >= RATE_REPORT_SECONDS:
+                self._debug(
+                    f"The phone sent {frames} pictures in {elapsed:.1f} s, "
+                    f"{frames / elapsed:.1f} per second, and {self._fps} "
+                    "per second is being output."
+                )
+                frames, since = 0, time.monotonic()
             if first:
                 first = False
                 if self._on_first_frame is not None:

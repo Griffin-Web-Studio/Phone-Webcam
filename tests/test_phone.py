@@ -91,3 +91,31 @@ def test_monitor_polls_in_the_background_until_stopped():
     monitor.stop()
     assert len(events) == 1
     assert monitor.current == phone.Phone(phone.MISSING)
+
+
+# ─────────────────────────────────────────────────────────| Properties |──
+GETPROP = """\
+[ro.product.manufacturer]: [samsung]
+[ro.product.model]: [SM-G975F]
+[ro.build.version.release]: [16]
+[ro.secure]: [1]
+[ro.build.version.sdk]: [36]
+not a property line
+"""
+
+
+def test_only_the_properties_of_interest_are_kept():
+    assert phone.parse_properties(GETPROP) == {
+        "ro.product.manufacturer": "samsung",
+        "ro.product.model": "SM-G975F",
+        "ro.build.version.release": "16",
+        "ro.build.version.sdk": "36",
+    }
+
+
+def test_properties_are_empty_when_adb_cannot_run(monkeypatch):
+    def gone(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(subprocess, "run", gone)
+    assert phone.read_properties() == {}

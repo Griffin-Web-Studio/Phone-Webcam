@@ -2,6 +2,7 @@
 
 import json
 import queue
+import sys
 import threading
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -18,8 +19,12 @@ APP_SIZE = (1100, 720)
 class Api:
     """Methods the pages can call as window.pywebview.api.*."""
 
-    def __init__(self, simulate: Iterable[str] = ()) -> None:
+    def __init__(
+        self, simulate: Iterable[str] = (), debug: bool = False
+    ) -> None:
         self._simulate = tuple(simulate)
+        # --debug also prints the log to the terminal, as it is written.
+        self._echo = debug
         self._window: Any = None
         self._clipboard = Clipboard()
         self._phone = phone.Monitor(self._push)
@@ -34,6 +39,7 @@ class Api:
             bool(prefs.get("mirror", False)),
             Settings.from_dict(prefs.get("settings")),
             SlateSettings.from_dict(prefs.get("cover")),
+            debug or prefs.get("debug") is True,
         )
 
     def attach(self, window: Any) -> None:
@@ -97,6 +103,15 @@ class Api:
         applied = self._webcam.set_settings(data)
         config.update_prefs({"settings": applied})
         return applied
+
+    def get_debug(self) -> bool:
+        """Whether the detailed log is on, for a page that has just loaded."""
+        return self._webcam.debugging()
+
+    def set_debug(self, on: bool) -> None:
+        """Turn the detailed log on or off, and remember the choice."""
+        self._webcam.set_debugging(bool(on))
+        config.update_prefs({"debug": bool(on)})
 
     def get_shutter(self) -> bool:
         """Whether the cover is on, for a page that has just loaded."""
@@ -184,6 +199,8 @@ class Api:
     # ───────────────────────────────────────────────────────────| Events |──
     def _push(self, event: dict) -> None:
         """Queue an event for the page, never blocking the caller."""
+        if self._echo and event.get("type") == "log":
+            print(event["line"], file=sys.stderr, flush=True)
         self._events.put(event)
 
     def _pump(self) -> None:

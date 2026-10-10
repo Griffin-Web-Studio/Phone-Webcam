@@ -573,7 +573,7 @@ def test_the_pipeline_is_built_from_the_settings(monkeypatch):
     )
     monkeypatch.setattr(cam, "_draw_slates", lambda w, h: FakeSlates())
     assert cam._start_pipeline("/fifo", "/dev/video0")
-    assert built["args"][4:] == (1280, 720, 60)
+    assert built["args"][4:7] == (1280, 720, 60)
 
 
 # ─────────────────────────────────────────────────────────────────| The cover |──
@@ -1035,3 +1035,145 @@ def test_scrcpy_args_can_take_the_limits_of_a_camera_it_is_not_selecting():
     args = webcam.scrcpy_args("/f", None, Settings(fps=60), S10_BACK)
     assert "--camera-fps=30" in args
     assert not any(a.startswith("--camera-id") for a in args)
+
+
+# ──────────────────────────────────────────────────────────────| Debugging |──
+DEBUG_LISTING = (
+    "scrcpy 5.0.1\n"
+    "    --camera-id=0    (back, 4032x3024, fps={15, 30})\n"
+    "    --camera-id=7    something new and unexpected\n"
+)
+
+
+def debug_lines(events):
+    return [e["line"] for e in events if e.get("debug")]
+
+
+def test_debugging_is_off_until_asked_for(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam._debug("detail")
+    assert cam.debugging() is False
+    assert debug_lines(events) == []
+
+
+def test_turning_debugging_on_says_so_and_tags_what_follows(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam.set_debugging(True)
+    assert {"type": "debug", "on": True} in events
+    assert cam.debugging() is True
+    cam._debug("detail")
+    assert debug_lines(events)[-1] == "[debug] detail"
+    assert "serial number" in debug_lines(events)[0]
+
+
+def test_turning_it_off_again_stops_the_detail(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam.set_debugging(True)
+    cam.set_debugging(False)
+    events.clear()
+    cam._debug("detail")
+    assert events == []
+
+
+def test_the_camera_list_is_shown_whole_when_debugging(monkeypatch):
+    cam, events = make(monkeypatch)
+    monkeypatch.setattr(cameras, "read_listing", lambda: DEBUG_LISTING)
+    cam.set_debugging(True)
+    cam.list_cameras()
+    shown = debug_lines(events)
+    assert (
+        "[debug]   |     --camera-id=0    (back, 4032x3024, fps={15, 30})"
+        in shown
+    )
+    assert (
+        "[debug] read camera 0: back, sizes ['4032x3024'], fps [15, 30]"
+        in shown
+    )
+    assert any(
+        line.startswith("[debug] not understood: --camera-id=7")
+        for line in shown
+    )
+
+
+def test_a_camera_line_that_cannot_be_read_is_flagged_even_without_debugging(
+    monkeypatch,
+):
+    cam, events = make(monkeypatch)
+    monkeypatch.setattr(cameras, "read_listing", lambda: DEBUG_LISTING)
+    cam.list_cameras()
+    assert any("1 camera lines" in line for line in logs(events))
+    assert debug_lines(events) == []
+
+
+def test_a_clean_list_is_not_flagged(monkeypatch):
+    cam, events = make(monkeypatch)
+    monkeypatch.setattr(
+        cameras, "read_listing", lambda: DEBUG_LISTING.splitlines()[1]
+    )
+    cam.list_cameras()
+    assert logs(events) == []
+
+
+def test_every_scrcpy_line_is_shown_when_debugging(monkeypatch):
+    same = [f"Camera capture failed {n}" for n in range(5)]
+    cam, events = make(monkeypatch, lines=same, code=1)
+    cam._stream("/dev/video0")
+    folded = len([l for l in logs(events) if "Camera capture" in l])
+    cam2, events2 = make(monkeypatch, lines=same, code=1)
+    cam2.set_debugging(True)
+    cam2._stream("/dev/video0")
+    shown = len([l for l in logs(events2) if "Camera capture" in l])
+    assert (folded, shown) == (1, 5)
+
+
+def test_the_end_of_scrcpy_and_the_first_picture_are_timed(monkeypatch):
+    cam, events = make(monkeypatch, code=1)
+    cam.set_debugging(True)
+    cam._stream("/dev/video0")
+    cam._on_first_frame()
+    shown = debug_lines(events)
+    assert any("scrcpy ended with code 1 after" in l for l in shown)
+    assert any("The first picture arrived" in l for l in shown)
+
+
+def test_the_environment_is_described_when_debugging(monkeypatch):
+    cam, events = make(monkeypatch)
+    monkeypatch.setattr(
+        webcam, "tool_banner", lambda command: f"{command[0]} 9"
+    )
+    monkeypatch.setattr(
+        webcam.phone,
+        "read_properties",
+        lambda: {"ro.product.model": "SM-G975F"},
+    )
+    cam.set_debugging(True)
+    cam._debug_environment()
+    shown = debug_lines(events)
+    assert "[debug] scrcpy: scrcpy 9" in shown
+    assert "[debug] phone ro.product.model: SM-G975F" in shown
+    assert "[debug] phone ro.build.version.sdk: unknown" in shown
+
+
+def test_nothing_is_asked_of_the_tools_when_not_debugging(monkeypatch):
+    cam, events = make(monkeypatch)
+
+    def boom(*args):
+        raise AssertionError("must not be run")
+
+    monkeypatch.setattr(webcam, "tool_banner", boom)
+    monkeypatch.setattr(webcam.phone, "read_properties", boom)
+    cam._debug_environment()
+
+
+def test_a_tool_banner_is_its_first_line(monkeypatch):
+    done = subprocess.CompletedProcess([], 0, "scrcpy 5.0.1 <x>\nmore\n", "")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: done)
+    assert webcam.tool_banner(["scrcpy", "--version"]) == "scrcpy 5.0.1 <x>"
+
+
+def test_a_tool_that_cannot_be_run_says_so(monkeypatch):
+    def gone(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(subprocess, "run", gone)
+    assert webcam.tool_banner(["scrcpy"]) == "could not be run"
