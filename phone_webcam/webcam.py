@@ -30,6 +30,8 @@ from phone_webcam.settings import Settings, SlateSettings
 # within moments. Without it the first picture can take twenty seconds.
 CODEC_OPTIONS = "i-frame-interval=1,prepend-sps-pps-to-idr-frames=1"
 SIGTERM_EXIT = -15
+# A long run of the same message is reported again after this many repeats.
+REPEAT_REPORT = 100
 CONFIRM_TIMEOUT = 300
 PREVIEW_TIMEOUT = 8
 
@@ -118,6 +120,36 @@ def clean_line(raw: str) -> str:
     text = ESCAPES.sub("", raw)
     pieces = [piece for piece in text.split("\r") if piece.strip()]
     return pieces[-1].rstrip() if pieces else ""
+
+
+class Repeats:
+    """Passes lines on, folding a run of near-identical ones into the first.
+
+    A camera that refuses every frame makes scrcpy say so hundreds of times, each
+    differing only in a number. Showing them all floods the log and the window, so
+    the first is shown and the rest are counted.
+    """
+
+    def __init__(self, emit: Callable[[str], None]) -> None:
+        self._emit = emit
+        self._key: str | None = None
+        self._skipped = 0
+
+    def add(self, line: str) -> None:
+        key = re.sub(r"\d+", "#", line)
+        if key == self._key:
+            self._skipped += 1
+            if self._skipped >= REPEAT_REPORT:
+                self.flush()
+            return
+        self.flush()
+        self._key = key
+        self._emit(line)
+
+    def flush(self) -> None:
+        if self._skipped:
+            self._emit(f"(the same message again, {self._skipped} more times)")
+        self._skipped = 0
 
 
 def read_lines(fd: int) -> Iterator[str]:
@@ -706,8 +738,10 @@ class Webcam:
             self._process = process
             if self._stop_requested:
                 process.terminate()
+        repeats = Repeats(self._log)
         for line in lines:
-            self._log(line)
+            repeats.add(line)
+        repeats.flush()
         code = process.wait()
         # An ending we asked for is SIGTERM, which is not an error.
         if code == SIGTERM_EXIT and (self._stop_requested or self._switching):

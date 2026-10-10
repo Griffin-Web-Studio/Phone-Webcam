@@ -745,6 +745,57 @@ def test_nothing_is_shown_when_the_camera_is_off(monkeypatch):
     cam._set_state(webcam.SWITCHING)  # no pipeline, no slates, no error
 
 
+# ────────────────────────────────────────────────────────| A camera that fails |──
+def folded(lines):
+    out = []
+    repeats = webcam.Repeats(out.append)
+    for line in lines:
+        repeats.add(line)
+    repeats.flush()
+    return out
+
+
+def test_a_run_of_near_identical_lines_is_folded_into_the_first_and_a_count():
+    lines = [
+        f"[server] WARN: Camera capture failed: frame {n}" for n in range(5)
+    ]
+    assert folded(lines) == [
+        "[server] WARN: Camera capture failed: frame 0",
+        "(the same message again, 4 more times)",
+    ]
+
+
+def test_different_lines_all_pass_through():
+    lines = ["INFO: one", "INFO: two", "WARN: three"]
+    assert folded(lines) == lines
+
+
+def test_lines_that_differ_in_words_are_not_folded():
+    lines = ["WARN: frame 1 failed", "WARN: frame 2 succeeded"]
+    assert folded(lines) == lines
+
+
+def test_folding_stops_when_something_else_comes_between():
+    out = folded(["fail 1", "fail 2", "INFO: ok", "fail 3"])
+    assert out == [
+        "fail 1",
+        "(the same message again, 1 more times)",
+        "INFO: ok",
+        "fail 3",
+    ]
+
+
+def test_a_very_long_run_is_reported_along_the_way_not_only_at_the_end():
+    out = folded([f"fail {n}" for n in range(251)])
+    counts = [line for line in out if line.startswith("(the same")]
+    assert counts == [
+        "(the same message again, 100 more times)",
+        "(the same message again, 100 more times)",
+        "(the same message again, 50 more times)",
+    ]
+    assert out[0] == "fail 0"
+
+
 # ───────────────────────────────────────────────────────────| The command shown |──
 def test_the_exact_scrcpy_command_is_logged_so_it_can_be_tried_by_hand(
     monkeypatch,
