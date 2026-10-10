@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="phone-webcam"
-APP_ID="com.griffin_web_studio.phone_webcam"
+APP_ID="studio.griffin_web.phone_webcam"
 BINARY="$ROOT/dist/$NAME"
 STAGE_ROOT="$ROOT/build/deb"
 

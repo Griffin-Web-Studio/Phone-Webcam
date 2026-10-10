@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.griffin_web_studio.phone_webcam</id>
+  <id>studio.griffin_web.phone_webcam</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>Phone Webcam</name>
   <summary>Use an Android phone's camera as a webcam</summary>
-  <developer id="com.griffin_web_studio">
+  <developer id="studio.griffin_web">
     <name>Griffin Web Studio</name>
   </developer>
   <description>
@@ -21,8 +21,8 @@
       <li>Change the frame rate and bitrate while running</li>
     </ul>
   </description>
-  <launchable type="desktop-id">com.griffin_web_studio.phone_webcam.desktop</launchable>
-  <icon type="stock">com.griffin_web_studio.phone_webcam</icon>
+  <launchable type="desktop-id">studio.griffin_web.phone_webcam.desktop</launchable>
+  <icon type="stock">studio.griffin_web.phone_webcam</icon>
   <url type="homepage">https://gitlab.com/griffin-web-studio/garage/phone-webcam</url>
   <provides>
     <binary>phone-webcam</binary>

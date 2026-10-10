@@ -12,7 +12,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BINARY_NAME="phone-webcam"
 PRODUCT_NAME="Phone Webcam"
 COMPANY_NAME="Griffin Web Studio"
-ICON="$SCRIPT_DIR/phone_webcam/assets/phone-webcam.svg"
 
 if ! command -v uv &>/dev/null; then
   echo "ERROR: uv is not installed." >&2
@@ -38,19 +37,13 @@ for tool in gcc patchelf; do
   fi
 done
 
-if [ ! -f "$ICON" ]; then
-  echo "ERROR: icon not found at $ICON" >&2
-  exit 1
-fi
-
-# The version and licence come from pyproject.toml, so the binary and the
-# desktop metadata Nuitka writes agree with the project.
+# The version comes from pyproject.toml, so the binary reports the same one as
+# the project and the packages.
 project_field() {
   (cd "$SCRIPT_DIR" && uv run --no-sync python -c \
     "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['$1'])")
 }
 VERSION="$(project_field version)"
-LICENSE_ID="$(project_field license)"
 # Nuitka wants up to four plain numbers, so a suffix such as -rc1 is dropped.
 FILE_VERSION="$(echo "$VERSION" | grep -oE '^[0-9]+(\.[0-9]+){0,3}')"
 
@@ -66,25 +59,26 @@ echo "Syncing build dependencies..."
 
 mkdir -p "$SCRIPT_DIR/dist"
 
-# What the app reads at run time. The web folder is the whole interface and
-# settings.ini holds the branding name. pywebview's own script files are found
+# What the app reads at run time. The web folder is the whole interface, the
+# slates folder holds the default cover image, the assets folder holds the app
+# icon the cover shows, and settings.ini holds the branding name. pywebview's own script files are found
 # by Nuitka itself.
 DATA_ARGS=(
   --include-data-dir="$SCRIPT_DIR/phone_webcam/web=phone_webcam/web"
+  --include-data-dir="$SCRIPT_DIR/phone_webcam/slates=phone_webcam/slates"
+  --include-data-dir="$SCRIPT_DIR/phone_webcam/assets=phone_webcam/assets"
   --include-data-files="$SCRIPT_DIR/settings.ini=settings.ini"
 )
 
 echo "Building $BINARY_NAME $VERSION (this takes several minutes the first time)..."
 (cd "$SCRIPT_DIR" && uv run python -m nuitka run.py \
-  --mode=app \
+  --mode=onefile \
   --output-filename="$BINARY_NAME" \
   --output-dir=build \
   --enable-plugin=pyqt6 \
   --include-module=webview.platforms.qt \
   --include-module=qtpy \
   --noinclude-qt-translations \
-  --linux-app-icon="$ICON" \
-  --linux-app-license="$LICENSE_ID" \
   --company-name="$COMPANY_NAME" \
   --product-name="$PRODUCT_NAME" \
   --file-version="$FILE_VERSION" \
@@ -94,12 +88,6 @@ echo "Building $BINARY_NAME $VERSION (this takes several minutes the first time)
   "${DATA_ARGS[@]}")
 
 cp "$SCRIPT_DIR/build/$BINARY_NAME" "$SCRIPT_DIR/dist/$BINARY_NAME"
-
-# With --mode=app Nuitka also writes a desktop entry, AppStream metadata and
-# the icon beside the binary. They are what a package or an installer needs.
-for extra in "$SCRIPT_DIR"/build/com.griffin_web_studio.phone_webcam.*; do
-  [ -e "$extra" ] && cp "$extra" "$SCRIPT_DIR/dist/"
-done
 
 if [ ! -f "$SCRIPT_DIR/dist/$BINARY_NAME" ]; then
   echo "ERROR: build failed - dist/$BINARY_NAME not found" >&2

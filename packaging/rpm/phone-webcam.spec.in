@@ -9,9 +9,9 @@ URL:            @URL@
 ExclusiveArch:  x86_64
 
 Source0:        phone-webcam
-Source1:        com.griffin_web_studio.phone_webcam.desktop
-Source2:        com.griffin_web_studio.phone_webcam.metainfo.xml
-Source3:        com.griffin_web_studio.phone_webcam.svg
+Source1:        studio.griffin_web.phone_webcam.desktop
+Source2:        studio.griffin_web.phone_webcam.metainfo.xml
+Source3:        studio.griffin_web.phone_webcam.svg
 Source4:        phone-webcam.1
 Source5:        LICENSE
 
@@ -47,11 +47,11 @@ cp -p %{SOURCE5} .
 %install
 install -Dpm 0755 %{SOURCE0} %{buildroot}%{_bindir}/phone-webcam
 install -Dpm 0644 %{SOURCE1} \
-    %{buildroot}%{_datadir}/applications/com.griffin_web_studio.phone_webcam.desktop
+    %{buildroot}%{_datadir}/applications/studio.griffin_web.phone_webcam.desktop
 install -Dpm 0644 %{SOURCE2} \
-    %{buildroot}%{_datadir}/metainfo/com.griffin_web_studio.phone_webcam.metainfo.xml
+    %{buildroot}%{_datadir}/metainfo/studio.griffin_web.phone_webcam.metainfo.xml
 install -Dpm 0644 %{SOURCE3} \
-    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.griffin_web_studio.phone_webcam.svg
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/studio.griffin_web.phone_webcam.svg
 # Compressing man pages is one of the steps switched off above.
 install -dm 0755 %{buildroot}%{_mandir}/man1
 gzip -9n -c %{SOURCE4} > %{buildroot}%{_mandir}/man1/phone-webcam.1.gz
@@ -59,9 +59,9 @@ gzip -9n -c %{SOURCE4} > %{buildroot}%{_mandir}/man1/phone-webcam.1.gz
 %files
 %license LICENSE
 %{_bindir}/phone-webcam
-%{_datadir}/applications/com.griffin_web_studio.phone_webcam.desktop
-%{_datadir}/metainfo/com.griffin_web_studio.phone_webcam.metainfo.xml
-%{_datadir}/icons/hicolor/scalable/apps/com.griffin_web_studio.phone_webcam.svg
+%{_datadir}/applications/studio.griffin_web.phone_webcam.desktop
+%{_datadir}/metainfo/studio.griffin_web.phone_webcam.metainfo.xml
+%{_datadir}/icons/hicolor/scalable/apps/studio.griffin_web.phone_webcam.svg
 %{_mandir}/man1/phone-webcam.1.gz
 
 %changelog
