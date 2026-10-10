@@ -4,11 +4,13 @@ import subprocess
 import threading
 import time
 import types
+from pathlib import Path
 
 import pytest
 
 from phone_webcam import cameras, webcam
-from phone_webcam.settings import Settings
+from phone_webcam import slate as slate_module
+from phone_webcam.settings import Settings, SlateSettings
 
 
 # ───────────────────────────────────────────────────────────────| Controller |──
@@ -567,5 +569,177 @@ def test_the_pipeline_is_built_from_the_settings(monkeypatch):
     cam = webcam.Webcam(
         lambda e: None, settings=Settings(resolution="720p", fps=60)
     )
+    monkeypatch.setattr(cam, "_draw_slates", lambda w, h: FakeSlates())
     assert cam._start_pipeline("/fifo", "/dev/video0")
     assert built["args"][4:] == (1280, 720, 60)
+
+
+# ─────────────────────────────────────────────────────────────────| The cover |──
+class FakeSlates:
+    """Stands in for the drawn frames, each one named by its kind."""
+
+    def __init__(self, drawn=True):
+        self.drawn = drawn
+        self.configured = []
+        self.calls = []
+
+    def cached(self, kind):
+        return f"frame:{kind}".encode() if self.drawn else None
+
+    def frame(self, kind):
+        self.calls.append(kind)
+        self.drawn = True
+        return self.cached(kind)
+
+    def configure(self, path, title, subtitle):
+        self.configured.append((path, title, subtitle))
+
+
+class FakeLive:
+    def __init__(self):
+        self.shown = []
+
+    def set_slate(self, frame, mirror=True):
+        self.shown.append((frame, mirror))
+
+
+def covered(monkeypatch, state=webcam.RUNNING, drawn=True):
+    cam, events = make(monkeypatch)
+    cam._pipeline = FakeLive()
+    cam._slates = FakeSlates(drawn)
+    cam.state = state
+    return cam, events
+
+
+def test_nothing_covers_the_camera_by_default(monkeypatch):
+    cam, _ = covered(monkeypatch)
+    assert cam._slate_kind() is None
+    cam._apply_slate()
+    assert cam._pipeline.shown == [(None, True)]
+
+
+def test_the_shutter_covers_the_camera_and_reports_it(monkeypatch):
+    cam, events = covered(monkeypatch)
+    cam.set_shutter(True)
+    assert cam._pipeline.shown[-1] == (b"frame:shutter", True)
+    assert {"type": "shutter", "on": True} in events
+    cam.set_shutter(False)
+    assert cam._pipeline.shown[-1] == (None, True)
+
+
+def test_the_shutter_can_be_set_before_the_webcam_starts(monkeypatch):
+    cam, events = make(monkeypatch)
+    cam.set_shutter(True)
+    assert cam.shutter() is True
+    assert {"type": "shutter", "on": True} in events
+
+
+@pytest.mark.parametrize(
+    "state, kind",
+    [
+        (webcam.STARTING, "starting"),
+        (webcam.SWITCHING, "switching"),
+        (webcam.APPLYING, "applying"),
+    ],
+)
+def test_a_busy_camera_shows_its_notice(monkeypatch, state, kind):
+    cam, _ = covered(monkeypatch, state=state)
+    assert cam._slate_kind() == kind
+
+
+def test_a_running_camera_has_no_notice(monkeypatch):
+    cam, _ = covered(monkeypatch, state=webcam.RUNNING)
+    assert cam._slate_kind() is None
+
+
+def test_notices_can_be_switched_off(monkeypatch):
+    cam, _ = covered(monkeypatch, state=webcam.SWITCHING)
+    cam.set_cover_settings({"notices": False})
+    assert cam._slate_kind() is None
+
+
+def test_the_shutter_wins_over_a_notice(monkeypatch):
+    cam, _ = covered(monkeypatch, state=webcam.SWITCHING)
+    cam._shutter = True
+    assert cam._slate_kind() == slate_module.SHUTTER
+
+
+def test_a_state_change_shows_or_clears_the_notice(monkeypatch):
+    cam, _ = covered(monkeypatch, state=webcam.RUNNING)
+    cam._set_state(webcam.SWITCHING)
+    assert cam._pipeline.shown[-1][0] == b"frame:switching"
+    cam._set_state(webcam.RUNNING)
+    assert cam._pipeline.shown[-1][0] is None
+
+
+def test_the_shutter_stays_when_the_camera_comes_back(monkeypatch):
+    cam, _ = covered(monkeypatch, state=webcam.SWITCHING)
+    cam._shutter = True
+    cam._set_state(webcam.RUNNING)
+    assert cam._pipeline.shown[-1][0] == b"frame:shutter"
+
+
+def test_mirroring_the_cover_follows_the_setting(monkeypatch):
+    cam, _ = covered(monkeypatch)
+    cam.set_cover_settings({"mirror": False})
+    cam.set_shutter(True)
+    assert cam._pipeline.shown[-1] == (b"frame:shutter", False)
+
+
+def test_a_frame_not_drawn_yet_is_drawn_without_waiting(monkeypatch):
+    cam, _ = covered(monkeypatch, drawn=False)
+    cam._shutter = True
+    cam._apply_slate()
+    for _ in range(200):
+        if cam._pipeline.shown and cam._pipeline.shown[-1][0]:
+            break
+        time.sleep(0.01)
+    assert cam._slates.calls == ["shutter"]
+    assert cam._pipeline.shown[-1][0] == b"frame:shutter"
+
+
+def test_changing_the_cover_redraws_it(monkeypatch):
+    cam, events = covered(monkeypatch)
+    applied = cam.set_cover_settings({"title": "Lunch", "svg": "/x/a.svg"})
+    assert applied["title"] == "Lunch"
+    assert cam._slates.configured[-1] == (
+        Path("/x/a.svg"),
+        "Lunch",
+        "Camera is covered",
+    )
+    assert events[-1]["type"] == "cover"
+
+
+def test_bad_cover_settings_are_ignored(monkeypatch):
+    cam, _ = covered(monkeypatch)
+    applied = cam.set_cover_settings({"notices": "yes", "title": 3})
+    assert applied == SlateSettings().as_dict()
+
+
+def test_the_output_opens_already_covered(monkeypatch):
+    shown = []
+
+    class FakePipeline:
+        def __init__(self, *args):
+            pass
+
+        def set_orientation(self, *_):
+            pass
+
+        def set_slate(self, frame, mirror=True):
+            shown.append((frame, mirror))
+
+        def start(self):
+            assert shown, "the cover must be set before the output opens"
+
+    monkeypatch.setattr(webcam.pipeline, "Pipeline", FakePipeline)
+    cam = webcam.Webcam(lambda e: None)
+    monkeypatch.setattr(cam, "_draw_slates", lambda w, h: FakeSlates())
+    cam.state = webcam.STARTING
+    assert cam._start_pipeline("/fifo", "/dev/video0")
+    assert shown == [(b"frame:starting", True)]
+
+
+def test_nothing_is_shown_when_the_camera_is_off(monkeypatch):
+    cam, _ = make(monkeypatch)
+    cam._set_state(webcam.SWITCHING)  # no pipeline, no slates, no error

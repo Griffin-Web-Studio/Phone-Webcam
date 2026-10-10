@@ -20,9 +20,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 
-from phone_webcam import cameras, deps, loopback, phone, pipeline
+from phone_webcam import cameras, deps, loopback, phone, pipeline, slate
 from phone_webcam.preview import Preview
-from phone_webcam.settings import Settings
+from phone_webcam.settings import Settings, SlateSettings
 
 # ──────────────────────────────────────────────────────────────────| Config |──
 # A keyframe every second, with its parameter sets, so the decoder can start
@@ -38,6 +38,13 @@ RUNNING = "running"
 STOPPING = "stopping"
 SWITCHING = "switching"
 APPLYING = "applying"
+# Which notice covers the camera while it is busy, so a call does not look
+# frozen. Running has none, and the shutter overrides all of them.
+NOTICE_FOR_STATE = {
+    STARTING: "starting",
+    SWITCHING: "switching",
+    APPLYING: "applying",
+}
 # The preview carries on through a switch, showing the held last picture.
 PREVIEW_STATES = (RUNNING, SWITCHING, APPLYING)
 
@@ -126,9 +133,13 @@ class Webcam:
         rotation: int = 0,
         mirror: bool = False,
         settings: Settings | None = None,
+        cover: SlateSettings | None = None,
     ) -> None:
         self._emit = emit
         self._settings = settings or Settings()
+        self._cover = cover or SlateSettings()
+        self._shutter = False
+        self._slates: slate.Slates | None = None
         self._lock = threading.Lock()
         self._process: subprocess.Popen[str] | None = None
         self._pipeline: pipeline.Pipeline | None = None
@@ -253,6 +264,34 @@ class Webcam:
         self._set_state(state)
         self._process.terminate()
 
+    def shutter(self) -> bool:
+        return self._shutter
+
+    def set_shutter(self, on: bool) -> None:
+        """Cover the camera with the slate, or take the cover off.
+
+        It works before the webcam starts too, so a call can begin covered.
+        The phone's camera keeps running behind the cover.
+        """
+        self._shutter = on
+        self._emit({"type": "shutter", "on": on})
+        self._apply_slate()
+
+    def cover_settings(self) -> dict:
+        return self._cover.as_dict()
+
+    def set_cover_settings(self, data: dict) -> dict:
+        """Change the cover's text, image and behaviour, drawing it again."""
+        self._cover = SlateSettings.from_dict({**self._cover.as_dict(), **data})
+        slates = self._slates
+        if slates is not None:
+            slates.configure(
+                self._svg_path(), self._cover.title, self._cover.subtitle
+            )
+        self._emit({"type": "cover", **self.cover_settings()})
+        self._apply_slate()
+        return self.cover_settings()
+
     def list_cameras(self) -> list[dict]:
         """Ask the phone for its cameras, keeping them for later switches."""
         found = cameras.list_cameras()
@@ -292,6 +331,45 @@ class Webcam:
     def _set_state(self, state: str) -> None:
         self.state = state
         self._emit({"type": "state", "state": state})
+        self._apply_slate()
+
+    # ─────────────────────────────────────────────────────────────| Cover |──
+    def _svg_path(self) -> Path | None:
+        return Path(self._cover.svg) if self._cover.svg else None
+
+    def _slate_kind(self) -> str | None:
+        """What should cover the camera right now, if anything."""
+        if self._shutter:
+            return slate.SHUTTER
+        if self._cover.notices:
+            return NOTICE_FOR_STATE.get(self.state)
+        return None
+
+    def _apply_slate(self) -> None:
+        """Show the right cover, or the camera, without waiting to draw it.
+
+        A frame that is not drawn yet is drawn on another thread, which then
+        comes back here, so a state change never waits on ffmpeg.
+        """
+        live, slates = self._pipeline, self._slates
+        if live is None or slates is None:
+            return
+        kind = self._slate_kind()
+        if kind is None:
+            live.set_slate(None)
+            return
+        frame = slates.cached(kind)
+        if frame is not None:
+            live.set_slate(frame, self._cover.mirror)
+            return
+        threading.Thread(
+            target=self._draw_then_apply, args=(slates, kind), daemon=True
+        ).start()
+
+    def _draw_then_apply(self, slates: slate.Slates, kind: str) -> None:
+        slates.frame(kind)
+        if slates is self._slates:
+            self._apply_slate()
 
     def _log(self, line: str) -> None:
         self._emit({"type": "log", "line": line})
@@ -387,6 +465,7 @@ class Webcam:
                 self._process.terminate()
         self._stop_preview()
         live, self._pipeline = self._pipeline, None
+        self._slates = None
         if live is not None:
             live.stop()
         with self._lock:
@@ -486,6 +565,11 @@ class Webcam:
             self._settings.fps,
         )
         live.set_orientation(*self._turn)
+        self._slates = self._draw_slates(width, height)
+        # The first frames already carry the cover, so nothing flashes black.
+        kind = self._slate_kind()
+        if kind is not None:
+            live.set_slate(self._slates.cached(kind), self._cover.mirror)
         try:
             live.start()
         except OSError as exc:
@@ -493,6 +577,17 @@ class Webcam:
             return False
         self._pipeline = live
         return True
+
+    def _draw_slates(self, width: int, height: int) -> slate.Slates:
+        """Draw every cover once, in parallel, before the output opens."""
+        slates = slate.Slates(width, height)
+        slates.configure(
+            self._svg_path(), self._cover.title, self._cover.subtitle
+        )
+        slates.warm()
+        if slates.error:
+            self._log(slates.error)
+        return slates
 
     @staticmethod
     def _spawn(args: list[str]) -> tuple[subprocess.Popen, Iterator[str]]:

@@ -5,11 +5,12 @@ import queue
 import threading
 from collections.abc import Iterable
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
-from phone_webcam import config, deps, phone, pipeline, webcam
+from phone_webcam import config, deps, phone, pipeline, slate, webcam
 from phone_webcam.clipboard import Clipboard
-from phone_webcam.settings import Settings
+from phone_webcam.settings import Settings, SlateSettings
 
 APP_SIZE = (1100, 720)
 
@@ -32,6 +33,7 @@ class Api:
             rotation if rotation in pipeline.ROTATIONS else 0,
             bool(prefs.get("mirror", False)),
             Settings.from_dict(prefs.get("settings")),
+            SlateSettings.from_dict(prefs.get("cover")),
         )
 
     def attach(self, window: Any) -> None:
@@ -95,6 +97,52 @@ class Api:
         applied = self._webcam.set_settings(data)
         config.update_prefs({"settings": applied})
         return applied
+
+    def get_shutter(self) -> bool:
+        """Whether the cover is on, for a page that has just loaded."""
+        return self._webcam.shutter()
+
+    def set_shutter(self, on: bool) -> None:
+        """Cover the camera with the slate, or take the cover off."""
+        self._webcam.set_shutter(bool(on))
+
+    def get_cover(self) -> dict:
+        """The cover's text, image and options."""
+        return self._webcam.cover_settings()
+
+    def set_cover(self, data: dict) -> dict:
+        """Change the cover and remember it."""
+        applied = self._webcam.set_cover_settings(data)
+        config.update_prefs({"cover": applied})
+        return applied
+
+    def choose_cover_svg(self) -> dict:
+        """Let the user pick an SVG for the cover, after checking it draws.
+
+        Returns ok with the new settings, or the reason it was not used. A
+        message that is empty means the dialog was cancelled.
+        """
+        window = self._window
+        if window is None:
+            return {"ok": False, "message": ""}
+        import webview  # deferred, like the rest of the GUI stack
+
+        chosen = window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            allow_multiple=False,
+            file_types=("SVG images (*.svg)",),
+        )
+        if not chosen:
+            return {"ok": False, "message": ""}
+        path = Path(chosen[0])
+        error = slate.check_svg(path)
+        if error:
+            return {"ok": False, "message": error}
+        return {
+            "ok": True,
+            "message": "",
+            "cover": self.set_cover({"svg": str(path)}),
+        }
 
     def get_orientation(self) -> dict:
         """The current rotation and mirror, for a page that has just loaded."""

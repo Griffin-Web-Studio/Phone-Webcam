@@ -314,3 +314,96 @@ def test_api_passes_the_preview_wish_to_the_webcam(monkeypatch):
     api.show_preview(True)
     api.show_preview(False)
     assert seen == [True, False]
+
+
+# ───────────────────────────────────────────────────────────────────| Cover |──
+def test_the_cover_is_saved_with_the_other_choices():
+    from phone_webcam import config
+    from phone_webcam.api import Api
+
+    api = Api()
+    api.set_orientation(90, False)
+    api.set_cover({"title": "Lunch", "mirror": False})
+    saved = config.load_prefs()
+    assert saved["rotation"] == 90
+    assert (
+        saved["cover"]["title"] == "Lunch" and saved["cover"]["mirror"] is False
+    )
+    assert Api().get_cover()["title"] == "Lunch"
+
+
+def test_the_shutter_is_not_remembered_between_launches():
+    from phone_webcam.api import Api
+
+    api = Api()
+    api.set_shutter(True)
+    assert api.get_shutter() is True
+    assert Api().get_shutter() is False
+
+
+def fake_window(monkeypatch, answer):
+    import types as t
+
+    import webview
+
+    dialogs = []
+
+    def create_file_dialog(kind, **kwargs):
+        dialogs.append((kind, kwargs))
+        return answer
+
+    window = t.SimpleNamespace(
+        create_file_dialog=create_file_dialog, evaluate_js=lambda js: None
+    )
+    return window, dialogs, webview
+
+
+def test_choosing_a_good_svg_uses_it(monkeypatch, tmp_path):
+    from phone_webcam import slate
+    from phone_webcam.api import Api
+
+    svg = tmp_path / "mine.svg"
+    svg.write_text("<svg/>")
+    monkeypatch.setattr(slate, "check_svg", lambda path: "")
+    api = Api()
+    window, dialogs, webview = fake_window(monkeypatch, [str(svg)])
+    api.attach(window)
+    result = api.choose_cover_svg()
+    api.shutdown()
+    assert result["ok"] is True and result["cover"]["svg"] == str(svg)
+    assert dialogs[0][0] == webview.FileDialog.OPEN
+    assert api.get_cover()["svg"] == str(svg)
+
+
+def test_choosing_a_bad_svg_keeps_the_old_one_and_says_why(
+    monkeypatch, tmp_path
+):
+    from phone_webcam import slate
+    from phone_webcam.api import Api
+
+    monkeypatch.setattr(
+        slate, "check_svg", lambda path: "ffmpeg could not draw it"
+    )
+    api = Api()
+    window, _, _ = fake_window(monkeypatch, [str(tmp_path / "bad.svg")])
+    api.attach(window)
+    result = api.choose_cover_svg()
+    api.shutdown()
+    assert result == {"ok": False, "message": "ffmpeg could not draw it"}
+    assert api.get_cover()["svg"] == ""
+
+
+def test_cancelling_the_dialog_changes_nothing(monkeypatch):
+    from phone_webcam.api import Api
+
+    api = Api()
+    window, _, _ = fake_window(monkeypatch, None)
+    api.attach(window)
+    assert api.choose_cover_svg() == {"ok": False, "message": ""}
+    api.shutdown()
+
+
+def test_choosing_without_a_window_does_nothing():
+    from phone_webcam.api import Api
+
+    assert Api().choose_cover_svg() == {"ok": False, "message": ""}
