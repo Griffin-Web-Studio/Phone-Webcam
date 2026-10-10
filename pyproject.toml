@@ -43,6 +43,9 @@ changelog_incremental = true
 changelog_merge_prerelease = true
 version_files = [
   "pyproject.toml:^version",
+  # The version shown in the README's title and its release link.
+  "README.md:^# Phone Webcam",
+  "README.md:releases/v",
 ]
 # Runs after pyproject.toml's version is written but before the release
 # commit is created, so `uv lock` picks up the new version and the
