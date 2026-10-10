@@ -146,21 +146,29 @@ release:nightly:clean:
       set -eu
       if [ -n "${RELEASE_TOKEN:-}" ]; then
         HEADER="PRIVATE-TOKEN: $RELEASE_TOKEN"
+        USING="the RELEASE_TOKEN variable"
       else
         HEADER="JOB-TOKEN: $CI_JOB_TOKEN"
+        USING="the job token, because RELEASE_TOKEN is not set for this pipeline"
       fi
       API="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
       # The release first, then the tag. Already gone (404) is fine, it is the
       # first run, or an earlier one stopped half way.
       for target in "releases/$NIGHTLY_TAG" "repository/tags/$NIGHTLY_TAG"; do
-        code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        code="$(curl --silent --output /tmp/response.txt --write-out '%{http_code}' \
                      --request DELETE --header "$HEADER" "$API/$target")"
         case "$code" in
           2??|404) echo "$target: HTTP $code" ;;
           *)
-            echo "ERROR: could not delete $target (HTTP $code)." >&2
-            echo "       Add a project access token with the api scope as RELEASE_TOKEN," >&2
-            echo "       and make sure the $NIGHTLY_TAG tag is not protected." >&2
+            echo "ERROR: could not delete $target (HTTP $code), using $USING." >&2
+            echo "GitLab says: $(cat /tmp/response.txt)" >&2
+            echo >&2
+            echo "  401  the token is wrong or has expired." >&2
+            echo "  403  the token is not allowed to. The job token never is, so add a" >&2
+            echo "       project access token with the api scope and the Developer role" >&2
+            echo "       as the RELEASE_TOKEN CI/CD variable. If it is set and still" >&2
+            echo "       refused, check that the $NIGHTLY_TAG tag is not protected, and" >&2
+            echo "       that a protected variable is only given to protected branches." >&2
             exit 1
             ;;
         esac

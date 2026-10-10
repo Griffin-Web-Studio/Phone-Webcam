@@ -428,3 +428,93 @@ def test_the_gate_and_the_child_agree_on_the_package_name(main, nightly):
 def test_the_pipeline_passes_the_number_before_the_hash(nightly):
     steps = " ".join(str(s) for s in nightly["build:nightly"]["before_script"])
     assert '"$CI_PIPELINE_IID.$CI_COMMIT_SHORT_SHA"' in steps
+
+
+# ─────────────────────────────────────────────────────| The clean job, running |──
+@pytest.fixture
+def clean(nightly, tmp_path):
+    """Runs the clean job's real shell script, with a curl that answers as told.
+
+    The fake curl takes its answers from FAKE_CODES, one status for each call, and
+    writes a body like GitLab's. It stands first on the PATH, so the script that
+    runs is exactly the one in the pipeline file.
+    """
+    shim = tmp_path / "curl"
+    shim.write_text("""#!/bin/sh
+dir=$(dirname "$0")
+n=$(cat "$dir/n" 2>/dev/null || echo 0)
+n=$((n+1))
+echo $n > "$dir/n"
+code=$(echo "$FAKE_CODES" | cut -d, -f$n)
+out=
+while [ $# -gt 0 ]; do
+  [ "$1" = "--output" ] && out="$2"
+  shift
+done
+echo '{"message":"403 Forbidden"}' > "$out"
+printf '%s' "$code"
+""")
+    shim.chmod(0o755)
+    script = nightly["release:nightly:clean"]["script"][0]
+    import os
+    import subprocess
+
+    def run(codes, **extra):
+        (tmp_path / "n").unlink(missing_ok=True)
+        env = {
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "CI_API_V4_URL": "https://gitlab.example/api/v4",
+            "CI_PROJECT_ID": "1",
+            "CI_JOB_TOKEN": "the-job-token",
+            "NIGHTLY_TAG": "nightly",
+            "FAKE_CODES": codes,
+            **extra,
+        }
+        done = subprocess.run(
+            ["sh", "-c", script], capture_output=True, text=True, env=env
+        )
+        return done.returncode, done.stdout + done.stderr
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "codes",
+    ["404,404", "200,204", "200,404", "404,204"],
+    ids=[
+        "first run",
+        "a normal night",
+        "tag already gone",
+        "release already gone",
+    ],
+)
+def test_the_clean_job_succeeds_when_what_it_deletes_is_deleted_or_absent(
+    clean, codes
+):
+    code, output = clean(codes)
+    assert code == 0, output
+    assert "releases/nightly" in output and "repository/tags/nightly" in output
+
+
+def test_the_clean_job_says_when_the_job_token_is_refused(clean):
+    code, output = clean("403,403")
+    assert code != 0
+    assert "HTTP 403" in output
+    assert "RELEASE_TOKEN is not set" in output  # which credential was used
+    assert "403 Forbidden" in output  # and what GitLab itself said
+    assert "api scope" in output  # and what to do about it
+
+
+def test_the_clean_job_says_when_the_release_token_is_refused_and_never_prints_it(
+    clean,
+):
+    code, output = clean("403,403", RELEASE_TOKEN="glpat-very-secret")
+    assert code != 0
+    assert "using the RELEASE_TOKEN variable" in output
+    assert "glpat-very-secret" not in output
+
+
+def test_a_failed_delete_stops_before_the_tag_is_touched(clean):
+    code, output = clean("500,204")
+    assert code != 0
+    assert "repository/tags" not in output.split("ERROR")[0]
