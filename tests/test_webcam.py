@@ -796,6 +796,80 @@ def test_a_very_long_run_is_reported_along_the_way_not_only_at_the_end():
     assert out[0] == "fail 0"
 
 
+def test_a_camera_that_refuses_every_frame_is_logged_once_and_explained(
+    monkeypatch,
+):
+    storm = [
+        f"[server] WARN: Camera capture failed: frame {n}" for n in range(150)
+    ]
+    cam, events = make(monkeypatch, lines=storm, code=1)
+    cam._stream("/dev/video0")
+    out = logs(events)
+    assert sum("Camera capture failed" in line for line in out) == 1
+    reported = [line for line in out if line.startswith("(the same")]
+    assert reported == [
+        "(the same message again, 100 more times)",
+        "(the same message again, 49 more times)",
+    ]
+    assert "scrcpy exited with code 1" in out
+    explanation = [line for line in out if "refused to capture" in line]
+    assert explanation and "150 times" in explanation[0]
+    assert "720p" in explanation[0]  # and says what to try
+
+
+def test_a_recording_that_ends_without_a_picture_says_the_camera_may_not_be_real(
+    monkeypatch,
+):
+    cam, events = make(
+        monkeypatch, lines=["INFO: Recording complete to matroska file: x"]
+    )
+    cam._stream("/dev/video0")
+    assert any("may not be a real camera" in line for line in logs(events))
+    assert not any("refused to capture" in line for line in logs(events))
+
+
+def test_nothing_is_explained_once_a_picture_has_arrived(monkeypatch):
+    cam, events = make(monkeypatch, code=1)
+
+    def lines():
+        yield "INFO: sink started"
+        cam._got_frame = True  # the pipeline saw its first frame
+        yield "[server] WARN: Camera capture failed: frame 0"
+
+    monkeypatch.setattr(
+        cam,
+        "_spawn",
+        lambda args: (
+            types.SimpleNamespace(
+                terminate=lambda: None, poll=lambda: 1, wait=lambda: 1
+            ),
+            lines(),
+        ),
+    )
+    cam._stream("/dev/video0")
+    assert not any(
+        "refused" in line or "real camera" in line for line in logs(events)
+    )
+
+
+def test_nothing_is_explained_after_the_user_stops_it(monkeypatch):
+    cam, events = make(monkeypatch, lines=["INFO: starting"], code=0)
+    cam._stop_requested = True
+    cam._stream("/dev/video0")
+    assert not any(
+        "refused" in line or "real camera" in line for line in logs(events)
+    )
+
+
+def test_the_failure_count_starts_again_for_every_run(monkeypatch):
+    storm = ["[server] WARN: Camera capture failed: frame 0"] * 3
+    cam, events = make(monkeypatch, lines=storm, code=1)
+    cam._stream("/dev/video0")
+    cam._stream("/dev/video0")
+    counts = [line for line in logs(events) if "refused to capture" in line]
+    assert len(counts) == 2 and all("3 times" in line for line in counts)
+
+
 # ───────────────────────────────────────────────────────────| The command shown |──
 def test_the_exact_scrcpy_command_is_logged_so_it_can_be_tried_by_hand(
     monkeypatch,

@@ -30,6 +30,8 @@ from phone_webcam.settings import Settings, SlateSettings
 # within moments. Without it the first picture can take twenty seconds.
 CODEC_OPTIONS = "i-frame-interval=1,prepend-sps-pps-to-idr-frames=1"
 SIGTERM_EXIT = -15
+# scrcpy says this once for every frame the phone's camera refuses to take.
+CAPTURE_FAILED = "Camera capture failed"
 # A long run of the same message is reported again after this many repeats.
 REPEAT_REPORT = 100
 CONFIRM_TIMEOUT = 300
@@ -196,6 +198,7 @@ class Webcam:
         self._switching = False
         self._switched = False
         self._got_frame = False
+        self._capture_failures = 0
         self._stop_requested = False
         self._answer = False
         self._answered = threading.Event()
@@ -686,12 +689,31 @@ class Webcam:
                 else:
                     if code != 0:
                         self._log(f"scrcpy exited with code {code}")
+                    if not self._got_frame:
+                        self._explain_no_picture()
                     return
                 live = self._pipeline
                 if live is not None:
                     live.restart_reader()
         finally:
             shutil.rmtree(fifo.parent, ignore_errors=True)
+
+    def _explain_no_picture(self) -> None:
+        """Say why a run ended before the camera sent a single picture."""
+        if self._capture_failures:
+            self._log(
+                f"The phone refused to capture {self._capture_failures} times "
+                "and sent no picture. A camera can list sizes and frame rates "
+                "that it cannot really do. Try 720p or a lower frame rate "
+                "under Stream settings, or another camera. Another app using "
+                "the camera can cause this too."
+            )
+        else:
+            self._log(
+                "The phone ended the recording without sending a picture. "
+                "This may not be a real camera, some phones list extra ones "
+                "for their own use. Try another camera."
+            )
 
     def _revert_change(self) -> None:
         """A camera or settings that would not start, go back to the last."""
@@ -739,7 +761,10 @@ class Webcam:
             if self._stop_requested:
                 process.terminate()
         repeats = Repeats(self._log)
+        self._capture_failures = 0
         for line in lines:
+            if CAPTURE_FAILED in line:
+                self._capture_failures += 1
             repeats.add(line)
         repeats.flush()
         code = process.wait()
