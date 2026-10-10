@@ -180,18 +180,18 @@ not apply, each with its reason.
 
 ### Checking a package
 
-Both scripts leave the result in `dist/`. Before a release, run the checks, and
-install the package on a real system of that kind:
+Both scripts leave the result in `dist/`. `scripts/check-packages.sh` runs every
+check on them: lintian on the DEB, rpmlint on the RPM with the project's filters,
+and the validators for the desktop entry and the AppStream metadata. Any error or
+warning fails it. The pipeline runs it with `--require-tools`, which makes a
+missing checker an error and not a skipped check.
 
 ```bash
-lintian dist/phone-webcam_*_amd64.deb             # no errors or warnings expected
-rpmlint -r packaging/rpm/phone-webcam.rpmlintrc dist/*.rpm
-desktop-file-validate packaging/*.desktop
-
-# The metadata is a template, so fill it in before validating it
-sed 's/@VERSION@/0.0.0/; s/@DATE@/2026-01-01/' packaging/*.metainfo.xml.in > /tmp/check.metainfo.xml
-appstreamcli validate --no-net /tmp/check.metainfo.xml
+scripts/check-packages.sh
 ```
+
+It cannot tell you whether a package works. Before a release, install it on a real
+system of that kind:
 
 | Check on a real machine                                             | Fedora | Debian or Ubuntu |
 | ------------------------------------------------------------------- | ------ | ---------------- |
@@ -206,13 +206,29 @@ appstreamcli validate --no-net /tmp/check.metainfo.xml
 
 1. `cz bump` picks the version, updates it everywhere, writes the changelog and
    tags. See [Cutting a release](../CONTRIBUTING.md#cutting-a-release).
-2. Build the binary from the tagged commit, then both packages.
-3. Run the checks above, and the install tests on both kinds of system.
-4. Attach the three files to the release, with the release notes.
+2. Push the tag. The pipeline builds the binary and both packages from it, runs
+   the checks, publishes the files and creates the release, see
+   [CI pipeline](../CONTRIBUTING.md#ci-pipeline).
+3. Install the published packages on a real Fedora and a real Debian or Ubuntu
+   system, and go through the table above. The pipeline can prove that a package
+   is well formed, not that it works on someone's desktop.
 
-The version in the binary's file information has to be plain numbers, so
-`scripts/build.sh` drops any pre-release suffix such as `-rc.1` for that field only.
-The package files keep the full version.
+### Versions
+
+Three places need a version, and they want different things:
+
+| Where                          | Form                  | Why                                          |
+| ------------------------------ | --------------------- | -------------------------------------------- |
+| `pyproject.toml`, the git tag  | `1.0.0-rc.0`          | `cz bump` writes it, and it is valid PEP 440. |
+| The DEB and the RPM            | `1.0.0~rc.0`          | A dash is not allowed in an RPM version, and starts the revision in a Debian one. A tilde sorts before `1.0.0`, which is what a pre-release means. Both scripts convert it. |
+| The binary's file information  | `1.0.0` (`1.0.0.57` for a nightly) | Nuitka accepts up to four plain numbers. `scripts/build.sh` drops the suffix, and `BUILD_NUMBER` becomes the fourth part. |
+
+A nightly build is marked as a local version, `0.2.0+nightly.57.a1b2c3d`. That is
+valid PEP 440, which `uv` insists on, and a nightly is newer than the release it
+is built on, which a `+` gives. A tilde would put it before that release.
+
+The published files have fixed names, with the version in the address, so a version
+containing `~` or `+` never has to be a file name in the registry.
 
 ## Not done yet
 

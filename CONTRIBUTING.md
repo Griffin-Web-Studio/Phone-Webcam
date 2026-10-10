@@ -161,7 +161,8 @@ test:           cover the camera switch revert
 
 Types that appear in `CHANGELOG.md`: `feat`, `fix`, `perf`, `refactor`.
 Types excluded from the changelog (`build`, `chore`, `ci`, `docs`, `style`,
-`test`) are not user-facing.
+`test`) are not user-facing, and the pipeline skips some of its work for them, see
+[CI pipeline](#ci-pipeline).
 
 Breaking changes - append `!` to the type or add a `BREAKING CHANGE:` footer:
 
@@ -219,9 +220,10 @@ cz bump --increment PATCH
 
 ### After tagging
 
-Build the binary and the packages from the tagged commit, as in
-[Building locally](#building-locally), and attach them to the release. Once the
-pipeline exists it will do this.
+Pushing the tag is the last step. The pipeline builds the binary and both packages
+from the tagged commit, publishes them, and creates the GitLab Release with the
+notes and links, see [CI pipeline](#ci-pipeline). Check that the release page has
+all four files before announcing it.
 
 ### Tag format
 
@@ -234,8 +236,114 @@ pipeline exists it will do this.
 
 ## CI pipeline
 
-The pipeline is being set up. This section will describe its jobs, its triggers
-and how releases are published once it exists.
+| Stage     | Job                | Trigger           | What it does                                      |
+| --------- | ------------------ | ----------------- | ------------------------------------------------- |
+| `.pre`    | `check:nightly`    | schedule          | Reports whether main has moved since the last nightly build |
+| test      | `trigger:nightly`  | schedule          | Triggers the nightly child pipeline (`.gitlab/ci/nightly.yml`) |
+| test      | `test`             | commit / MR / tag | pytest with an 80 % coverage gate                 |
+| build     | `build`            | commit / MR / tag | Nuitka binary, then the `.deb` and `.rpm` made from it, then lintian, rpmlint and the metadata validators |
+| publish   | `publish:release`  | versioned tag     | Uploads the binary, both packages and `SHA256SUMS` to the Generic Package Registry |
+| release   | `release`          | versioned tag     | Creates a GitLab Release with the changelog and install steps, and links the four files |
+
+The `test` job installs the same Debian packages the app's own dependency check
+asks for, taken from `phone_webcam/deps.py`, so the tests run against what a real
+install has, including an ffmpeg that can draw SVG. Coverage is reported to the
+badge in the README.
+
+The `build` job runs the same three scripts you run locally, `scripts/build.sh`,
+`build-deb.sh` and `build-rpm.sh`, and then `scripts/check-packages.sh`, which
+fails on any lintian or rpmlint finding. Both the image (`python:3.14-trixie`)
+and the glibc it brings are what decide which systems the binary runs on, see
+[docs/packaging.md](docs/packaging.md#compatibility-glibc). Do not move to another
+image without checking that.
+
+### What runs for which commit
+
+The type of the commit decides how much of the pipeline it starts:
+
+| Type                                             | Runs                                  |
+| ------------------------------------------------ | ------------------------------------- |
+| `docs`, `chore`, `style`                         | Nothing, there is nothing to ship.    |
+| `test`                                           | `test` only, the code is unchanged.   |
+| `ci`, `build`                                    | `test` and `build`, to prove the change works. |
+| `feat`, `fix`, `perf`, `refactor`, `revert`      | `test` and `build`, and on a tag, the rest. |
+
+A merge request gets one pipeline, not two, and a new push cancels the one still
+running. Publishing and releasing are never cancelled part way.
+
+### Published files
+
+A release publishes four files to the Generic Package Registry, under the tag:
+
+```
+.../packages/generic/phone-webcam/<tag>/phone-webcam        the binary
+.../packages/generic/phone-webcam/<tag>/phone-webcam.deb    Debian and Ubuntu
+.../packages/generic/phone-webcam/<tag>/phone-webcam.rpm    Fedora
+.../packages/generic/phone-webcam/<tag>/SHA256SUMS
+```
+
+The names are fixed and the version is in the address, so the links in a release
+never need working out. The `.deb` and `.rpm` inside carry the real version, so
+`dnf` and `apt` see it.
+
+A pre-release tag such as `v1.0.0-rc.0` is a valid tag, and is released from the
+`rc` channel. Inside the packages the dash becomes a tilde, `1.0.0~rc.0`, because
+a dash is not allowed in an RPM version and starts the revision in a Debian one,
+and the tilde is how both say "comes before 1.0.0".
+
+### Nightly builds
+
+Scheduled pipelines (set up under CI/CD to Schedules in GitLab, targeting main)
+produce a rolling nightly build, published under the fixed version `nightly`, so
+the download addresses never change.
+
+`check:nightly` compares the current commit against the SHA recorded by the last
+successful nightly publish (`nightly-sha.txt` in the same package) and always
+succeeds. What it does next depends on the result: if main has moved, it copies
+`.gitlab/ci/nightly.yml` (the real `test`, `build:nightly` and `publish:nightly`
+chain) to `generated-nightly.yml`, and if not, it writes a single no-op job there
+instead. `trigger:nightly` then runs whichever was generated as a child pipeline.
+So a schedule firing on an unchanged main skips the whole chain, and a red nightly
+pipeline means a real test, build or publish failure.
+
+(Passing the answer to the child as a variable for its own `rules:` to read does
+not work. GitLab does not reliably make a parent job's variables available when it
+evaluates a child pipeline's rules, gitlab-org/gitlab#408160, so the decision is
+written into the child's YAML instead.)
+
+Nightly packages report a distinct version, `0.2.0+nightly.57.a1b2c3d`: the
+release they are built on, then the pipeline number and the commit. It is a
+PEP 440 local version, because `uv` refuses a version that is not valid PEP 440,
+and a `-nightly` label is not. It also sorts correctly, a nightly is newer than
+the release it is built on and a later one is newer than an earlier one, so
+`dnf` and `apt` upgrade through them in order. `scripts/patch_nightly_version.py`
+applies the suffix to `pyproject.toml` before the build. It only changes the CI
+job's checkout and is never committed.
+
+Every nightly binary also gets a different file version, which is what names the
+folder it unpacks into (see [Building locally](#building-locally)). Without that,
+people would keep running the first nightly they ever downloaded.
+
+### Setting it up
+
+- **Runners.** Jobs run in Docker images, so the runners need the Docker executor
+  and the `linux` tag. The test and build jobs install packages with `apt`, so
+  they need network access.
+- **Schedule.** Create the nightly one under CI/CD to Schedules, targeting main.
+- **Maintainer.** The packages carry a "Name <email>" maintainer, and a CI job has
+  no git identity. By default it is the person who started the pipeline. Set a
+  `MAINTAINER` CI/CD variable to fix it to something else.
+- **Tags.** Make them with `cz bump`, not by hand, so the version files, the
+  changelog and the tag agree.
+
+### Checking the pipeline files
+
+GitLab's own linter needs a server, so `tests/test_ci.py` checks what it can
+without one: every job is in a stage that exists, every `needs` and `extends`
+points at a real job, the commit filters skip the right types (against real
+example messages), and the release links exactly the files the publish job
+uploads. For everything else, paste the files into the CI Lint tool under CI/CD in
+GitLab before relying on a change.
 
 ## Building locally
 
@@ -254,6 +362,7 @@ bash scripts/build.sh                 # produces dist/phone-webcam
 ./dist/phone-webcam --check           # smoke-test the binary
 bash scripts/build-deb.sh
 bash scripts/build-rpm.sh
+bash scripts/check-packages.sh        # what the pipeline runs on them
 ```
 
 The packages need the binary and build it first if it is missing. The first
