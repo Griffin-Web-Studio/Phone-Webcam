@@ -18,11 +18,24 @@ dev = [
   "Pillow>=11.0.0",
   "CairoSVG>=2.7.1",
   "pytest>=8",
+  "pytest-cov>=7.1.0",
+  "pyyaml>=6.0.3",
 ]
 build = [
     "nuitka>=4.2.2",
     "zstandard>=0.25.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["phone_webcam"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
 
 [tool.black]
 line-length = 80
