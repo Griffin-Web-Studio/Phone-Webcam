@@ -53,7 +53,6 @@ PACKAGES: dict[str, dict[str, tuple[str, ...]]] = {
     "adb": {"fedora": ("android-tools",), "debian": ("adb",)},
     "v4l2_ctl": {"fedora": ("v4l-utils",), "debian": ("v4l-utils",)},
     "ffmpeg": {"fedora": ("ffmpeg-free",), "debian": ("ffmpeg",)},
-    "ffplay": {"fedora": ("ffmpeg-free",), "debian": ("ffmpeg",)},
     "v4l2loopback_ctl": {
         "fedora": ("v4l2loopback",),
         "debian": ("v4l2loopback-utils",),
@@ -406,7 +405,6 @@ SYSTEM_KEYS = (
     "scrcpy",
     "adb",
     "ffmpeg",
-    "ffplay",
     "v4l2_ctl",
     "v4l2loopback_ctl",
     "pkexec",
@@ -437,13 +435,6 @@ def run_system_checks(simulate: Iterable[str] = ()) -> list[CheckResult]:
         check_binary("adb", "adb", "adb"),
         check_binary(
             "ffmpeg", "ffmpeg", "ffmpeg", why="needed to turn the image"
-        ),
-        check_binary(
-            "ffplay",
-            "ffplay",
-            "ffplay",
-            required=False,
-            why="optional, needed for the preview",
         ),
         check_binary(
             "v4l2_ctl",

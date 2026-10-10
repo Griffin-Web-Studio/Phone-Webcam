@@ -4,6 +4,7 @@ from phone_webcam import loopback
 
 
 def make_sysfs(tmp_path, names):
+    tmp_path.mkdir(exist_ok=True)
     for node, name in names.items():
         (tmp_path / node).mkdir()
         (tmp_path / node / "name").write_text(name + "\n")
@@ -18,13 +19,15 @@ def test_find_device_matches_card_label(tmp_path):
 
 
 def test_find_device_does_not_confuse_prefixes(tmp_path):
-    sysfs = make_sysfs(tmp_path, {"video3": "Android Webcam Source"})
+    sysfs = make_sysfs(tmp_path, {"video3": "Android Webcam Old"})
     assert loopback.find_device("Android Webcam", sysfs) is None
 
 
 def test_missing_labels_lists_only_absent_devices(tmp_path):
-    sysfs = make_sysfs(tmp_path, {"video1": loopback.OUTPUT_LABEL})
-    assert loopback.missing_labels(sysfs=sysfs) == [loopback.SOURCE_LABEL]
+    sysfs = make_sysfs(tmp_path, {"video1": "Something else"})
+    assert loopback.missing_labels(sysfs=sysfs) == [loopback.OUTPUT_LABEL]
+    sysfs = make_sysfs(tmp_path / "b", {"video1": loopback.OUTPUT_LABEL})
+    assert loopback.missing_labels(sysfs=sysfs) == []
 
 
 def test_module_in_use_reads_the_refcount(tmp_path):
@@ -39,9 +42,9 @@ def test_module_in_use_reads_the_refcount(tmp_path):
 def test_load_command_creates_every_device_in_one_call():
     cmd = loopback.load_command()
     assert cmd[:3] == ["pkexec", "sh", "-c"]
-    assert "devices=2" in cmd[3]
-    assert "exclusive_caps=1,1" in cmd[3]
-    assert "'Android Webcam Source,Android Webcam'" in cmd[3]
+    assert "devices=1" in cmd[3]
+    assert "exclusive_caps=1 " in cmd[3]
+    assert "card_label='Android Webcam'" in cmd[3]
 
 
 def test_reload_command_unloads_first():

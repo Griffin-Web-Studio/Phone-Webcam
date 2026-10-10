@@ -1,8 +1,8 @@
 """Find and provision the v4l2loopback devices the pipeline needs.
 
-Two devices are used: scrcpy writes into the hidden source, the pipeline
-turns the image and writes it into the output that other apps open. Standard
-library only.
+One device is used: the pipeline turns the image and writes it into the
+output that other apps open. scrcpy reaches the pipeline through a FIFO, so no
+second, visible camera is needed. Standard library only.
 """
 
 import shlex
@@ -11,8 +11,7 @@ from pathlib import Path
 
 # ──────────────────────────────────────────────────────────────────| Config |──
 OUTPUT_LABEL = "Android Webcam"
-SOURCE_LABEL = "Android Webcam Source"
-LABELS = (SOURCE_LABEL, OUTPUT_LABEL)
+LABELS = (OUTPUT_LABEL,)
 V4L2_SYSFS = Path("/sys/class/video4linux")
 MODULE_REFCOUNT = Path("/sys/module/v4l2loopback/refcnt")
 

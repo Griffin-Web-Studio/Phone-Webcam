@@ -389,9 +389,8 @@ def test_run_system_checks_applies_simulation(monkeypatch):
     assert next(r for r in results if r.key == "adb").ok
 
 
-def test_ffmpeg_blocks_but_ffplay_does_not(monkeypatch):
+def test_ffmpeg_blocks_but_the_loopback_ctl_does_not(monkeypatch):
     monkeypatch.setattr(deps, "_which", lambda name: None)
     by_key = {r.key: r for r in deps.run_system_checks()}
     assert by_key["ffmpeg"].blocking
-    assert not by_key["ffplay"].blocking
     assert not by_key["v4l2loopback_ctl"].blocking
