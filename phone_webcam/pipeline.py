@@ -24,8 +24,6 @@ ROTATIONS = (0, 90, 180, 270)
 BLACK = (16, 128, 128)
 
 FFMPEG_QUIET = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
-# The preview needs far fewer frames than the output, so it gets every nth.
-PREVIEW_EVERY = 2
 
 
 # ──────────────────────────────────────────────────────────────| Processes |──
@@ -143,11 +141,14 @@ class Pipeline:
         self._latest: bytes | bytearray = black_frame(width, height)
         self._turn = (0, False)
         self._preview: PreviewSink | None = None
+        self._preview_every = 1
         self._last_error = ""
         self._stopping = threading.Event()
+        self._reader_quiet = threading.Event()
         self._reader: subprocess.Popen[bytes] | None = None
         self._writer: subprocess.Popen[bytes] | None = None
         self._threads: list[threading.Thread] = []
+        self._reader_threads: list[threading.Thread] = []
 
     def set_orientation(self, rotation: int, mirror: bool) -> None:
         """Change the turn, taking effect on the next frame."""
@@ -155,8 +156,15 @@ class Pipeline:
             raise ValueError(f"rotation must be one of {ROTATIONS}")
         self._turn = (rotation, mirror)
 
-    def set_preview(self, sink: PreviewSink | None) -> None:
-        """Send turned frames to a preview, or stop with None."""
+    def set_preview(
+        self, sink: PreviewSink | None, preview_fps: int | None = None
+    ) -> None:
+        """Send turned frames to a preview, or stop with None.
+
+        The preview gets every nth frame, so it runs at about its own rate.
+        """
+        if preview_fps:
+            self._preview_every = max(1, round(self._fps / preview_fps))
         self._preview = sink
 
     def start(self) -> None:
@@ -172,15 +180,21 @@ class Pipeline:
             stdin=subprocess.PIPE,
             bufsize=0,
         )
+        thread = threading.Thread(target=self._write_loop, daemon=True)
+        thread.start()
+        self._threads.append(thread)
+        self._start_reader()
+
+    def _start_reader(self) -> None:
         # Opening the FIFO waits for scrcpy to open its end, which is fine,
         # and a stop wakes it by ending the process.
-        self._reader = subprocess.Popen(
+        reader = subprocess.Popen(
             [
                 "ffmpeg",
                 *("-hide_banner", "-loglevel", "fatal"),
                 *("-fflags", "nobuffer", "-flags", "low_delay"),
                 *("-i", self._source),
-                *("-vf", f"scale={self._width}:{self._height}"),
+                *("-vf", self._fit_filter()),
                 *("-fps_mode", "passthrough"),
                 *("-pix_fmt", "yuv420p", "-f", "rawvideo", "-"),
             ],
@@ -188,10 +202,41 @@ class Pipeline:
             stderr=subprocess.PIPE,
             bufsize=0,
         )
-        for target in (self._read_loop, self._write_loop, self._drain_errors):
-            thread = threading.Thread(target=target, daemon=True)
+        self._reader = reader
+        self._reader_threads = [
+            threading.Thread(
+                target=self._read_loop, args=(reader,), daemon=True
+            ),
+            threading.Thread(
+                target=self._drain_errors, args=(reader,), daemon=True
+            ),
+        ]
+        for thread in self._reader_threads:
             thread.start()
-            self._threads.append(thread)
+
+    def _fit_filter(self) -> str:
+        """Scale to the output size, padding when the shape differs."""
+        w, h = self._width, self._height
+        return (
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+        )
+
+    def restart_reader(self) -> None:
+        """Reconnect to a new recording while the output keeps running.
+
+        The writer is untouched and keeps repeating the last frame, so apps
+        see a short pause instead of a camera that vanished.
+        """
+        self._reader_quiet.set()
+        try:
+            if self._reader is not None:
+                end_process(self._reader)
+            for thread in self._reader_threads:
+                thread.join(timeout=5)
+            self._start_reader()
+        finally:
+            self._reader_quiet.clear()
 
     def quiet(self) -> None:
         """Expect the feed to end, so its ending is not reported as a fault."""
@@ -202,20 +247,20 @@ class Pipeline:
         for process in (self._reader, self._writer):
             if process is not None:
                 end_process(process)
-        for thread in self._threads:
+        for thread in (*self._threads, *self._reader_threads):
             thread.join(timeout=5)
 
     # ───────────────────────────────────────────────────────────────| Loops |──
-    def _drain_errors(self) -> None:
+    def _drain_errors(self, reader: subprocess.Popen[bytes]) -> None:
         """Keep the reader's stderr empty, so it never blocks on a full pipe."""
-        stream = self._reader.stderr  # type: ignore[union-attr]
+        stream = reader.stderr  # type: ignore[union-attr]
         for raw in iter(stream.readline, b""):
             text = raw.decode(errors="replace").strip()
             if text:
                 self._last_error = text
 
-    def _read_loop(self) -> None:
-        stream = self._reader.stdout  # type: ignore[union-attr]
+    def _read_loop(self, reader: subprocess.Popen[bytes]) -> None:
+        stream = reader.stdout  # type: ignore[union-attr]
         first = True
         while not self._stopping.is_set():
             frame = bytearray(self._frame_size)
@@ -224,7 +269,9 @@ class Pipeline:
             while got < self._frame_size:
                 count = stream.readinto(view[got:])
                 if not count:
-                    if not self._stopping.is_set():
+                    if not (
+                        self._stopping.is_set() or self._reader_quiet.is_set()
+                    ):
                         self._log(
                             f"The camera feed ended. {self._last_error}".strip()
                         )
@@ -251,7 +298,7 @@ class Pipeline:
                     self._log("The webcam output closed unexpectedly.")
                 return
             preview = self._preview
-            if preview is not None and count % PREVIEW_EVERY == 0:
+            if preview is not None and count % self._preview_every == 0:
                 preview.offer(planes)
             count += 1
             deadline += interval

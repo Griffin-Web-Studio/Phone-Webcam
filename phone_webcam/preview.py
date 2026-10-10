@@ -16,7 +16,6 @@ from phone_webcam.pipeline import end_process
 
 # ──────────────────────────────────────────────────────────────────| Config |──
 PREVIEW_WIDTH = 480
-PREVIEW_FPS = 15
 JPEG_END = b"\xff\xd9"
 BOUNDARY = "frame"
 
@@ -112,9 +111,10 @@ class _Handler(BaseHTTPRequestHandler):
 class Preview:
     """Encodes offered frames and serves them until stopped."""
 
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(self, width: int, height: int, fps: int = 30) -> None:
         self._width = width
         self._height = height
+        self._fps = fps
         self._hub = Hub()
         self._server: _Server | None = None
         self._encoder: subprocess.Popen[bytes] | None = None
@@ -131,7 +131,7 @@ class Preview:
                 "ffmpeg",
                 *("-hide_banner", "-loglevel", "fatal"),
                 *("-f", "rawvideo", "-pix_fmt", "yuv420p"),
-                *("-video_size", size, "-framerate", str(PREVIEW_FPS)),
+                *("-video_size", size, "-framerate", str(self._fps)),
                 *("-i", "-", "-vf", f"scale={PREVIEW_WIDTH}:-2"),
                 *("-q:v", "6", "-flush_packets", "1", "-f", "mjpeg", "-"),
             ],

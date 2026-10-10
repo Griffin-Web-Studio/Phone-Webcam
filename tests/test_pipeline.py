@@ -145,7 +145,11 @@ def run_pipeline(monkeypatch, reader, writer=None, on_first_frame=None):
         "src", "out", logs.append, on_first_frame, W, H, fps=200
     )
     live.start()
-    live._threads[0].join(timeout=5)
+    live._reader_threads[0].join(timeout=5)
+    for _ in range(200):
+        if len(writer.stdin.written) >= W * H * 3 // 2 * 2:
+            break
+        time.sleep(0.005)
     live.stop()
     return live, writer, logs
 
@@ -172,18 +176,16 @@ def test_feed_end_includes_the_decoder_error(monkeypatch):
     live._last_error = "Invalid data found"
     logs = []
     live._log = logs.append
-    live._reader = reader
-    live._read_loop()
+    live._read_loop(reader)
     assert logs == ["The camera feed ended. Invalid data found"]
 
 
 def test_a_quiet_pipeline_does_not_report_the_feed_ending(monkeypatch):
     _, _, logs = run_pipeline(monkeypatch, FakeProcess(b""))
     quiet = pipeline.Pipeline("src", "out", logs.append, width=W, height=H)
-    quiet._reader = FakeProcess(b"")
     logs.clear()
     quiet.quiet()
-    quiet._read_loop()
+    quiet._read_loop(FakeProcess(b""))
     assert logs == []
 
 
@@ -196,8 +198,51 @@ def test_preview_gets_every_other_turned_frame(monkeypatch):
     live = pipeline.Pipeline("src", "out", print, width=W, height=H, fps=500)
     live.set_preview(types.SimpleNamespace(offer=offered.append))
     live.start()
-    live._threads[0].join(timeout=5)
+    live._reader_threads[0].join(timeout=5)
     time.sleep(0.1)
     live.stop()
     assert offered
     assert offered[0][0].shape == (H, W)
+
+
+def test_restarting_the_reader_keeps_the_writer_and_stays_quiet(monkeypatch):
+    writer = FakeProcess()
+    readers = iter([FakeProcess(b""), FakeProcess(bytes(frame()))])
+    spawned = []
+
+    def popen(*args, **kwargs):
+        if kwargs.get("stdin"):
+            return writer
+        spawned.append(1)
+        return next(readers)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    logs = []
+    live = pipeline.Pipeline(
+        "src", "out", logs.append, width=W, height=H, fps=200
+    )
+    live.start()
+    live.restart_reader()
+    live._reader_threads[0].join(timeout=5)
+    live.stop()
+    assert len(spawned) == 2
+    assert live._writer is writer
+    assert logs == ["The camera feed ended."]
+
+
+def test_fit_filter_pads_instead_of_stretching():
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H)
+    assert live._fit_filter() == (
+        f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2"
+    )
+
+
+def test_preview_gets_frames_at_its_own_rate():
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H, fps=60)
+    live.set_preview(types.SimpleNamespace(offer=print), 30)
+    assert live._preview_every == 2
+    live.set_preview(types.SimpleNamespace(offer=print), 60)
+    assert live._preview_every == 1
+    live.set_preview(None)
+    assert live._preview is None
