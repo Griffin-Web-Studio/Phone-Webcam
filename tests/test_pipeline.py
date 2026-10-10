@@ -1,6 +1,8 @@
 """Tests for turning frames and for the pipeline's process handling."""
 
 import subprocess
+import time
+import types
 
 import numpy as np
 import pytest
@@ -69,7 +71,7 @@ def test_black_frame_has_the_right_size_and_values():
 
 
 def test_turned_frames_always_match_the_output_size():
-    live = pipeline.Pipeline("src", "out", print, W, H)
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H)
     for rotation in pipeline.ROTATIONS:
         for mirror in (False, True):
             live.set_orientation(rotation, mirror)
@@ -79,7 +81,7 @@ def test_turned_frames_always_match_the_output_size():
 
 
 def test_bad_rotation_is_rejected():
-    live = pipeline.Pipeline("src", "out", print, W, H)
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H)
     with pytest.raises(ValueError):
         live.set_orientation(45, False)
 
@@ -102,6 +104,13 @@ class FakeStream:
     def read(self):
         return self.data.tobytes()
 
+    def close(self):
+        pass
+
+    def readline(self):
+        data, self.data = self.data.tobytes(), memoryview(b"")
+        return data
+
 
 class FakeProcess:
     def __init__(self, data=b"", error=b""):
@@ -119,24 +128,22 @@ class FakeProcess:
         return 0
 
 
-def fake_popen(reader_runs, writer):
-    """Hand out the writer for stdin pipes and each reader in turn."""
-    readers = iter(reader_runs)
+def fake_popen(reader, writer):
+    """Hand out the writer for stdin pipes and the reader otherwise."""
 
     def popen(*args, **kwargs):
-        return writer if kwargs.get("stdin") else next(readers)
+        return writer if kwargs.get("stdin") else reader
 
     return popen
 
 
-def run_pipeline(monkeypatch, reader_runs, writer=None, attempts=None):
+def run_pipeline(monkeypatch, reader, writer=None, on_first_frame=None):
     writer = writer or FakeProcess()
-    monkeypatch.setattr(subprocess, "Popen", fake_popen(reader_runs, writer))
-    monkeypatch.setattr(pipeline, "CONNECT_DELAY", 0)
-    if attempts:
-        monkeypatch.setattr(pipeline, "CONNECT_ATTEMPTS", attempts)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen(reader, writer))
     logs = []
-    live = pipeline.Pipeline("src", "out", logs.append, W, H, fps=200)
+    live = pipeline.Pipeline(
+        "src", "out", logs.append, on_first_frame, W, H, fps=200
+    )
     live.start()
     live._threads[0].join(timeout=5)
     live.stop()
@@ -144,25 +151,53 @@ def run_pipeline(monkeypatch, reader_runs, writer=None, attempts=None):
 
 
 def test_frames_flow_from_reader_to_writer(monkeypatch):
-    _, writer, logs = run_pipeline(monkeypatch, [FakeProcess(bytes(frame()))])
+    _, writer, logs = run_pipeline(monkeypatch, FakeProcess(bytes(frame())))
+    size = W * H * 3 // 2
+    assert bytes(writer.stdin.written[-size:]) == bytes(frame())
     assert "The camera feed ended." in logs
-    size = W * H * 3 // 2
-    assert bytes(writer.stdin.written[-size:]) == bytes(frame())
 
 
-def test_reader_retries_until_the_source_is_ready(monkeypatch):
-    not_ready = FakeProcess(error=b"Not a video capture device.\n")
-    _, writer, logs = run_pipeline(
-        monkeypatch, [not_ready, not_ready, FakeProcess(bytes(frame()))]
+def test_first_frame_is_reported_once(monkeypatch):
+    calls = []
+    data = bytes(frame()) * 3
+    run_pipeline(
+        monkeypatch, FakeProcess(data), on_first_frame=lambda: calls.append(1)
     )
-    size = W * H * 3 // 2
-    assert bytes(writer.stdin.written[-size:]) == bytes(frame())
-    assert not any("Could not read" in line for line in logs)
+    assert calls == [1]
 
 
-def test_reader_gives_up_and_says_why(monkeypatch):
-    never = FakeProcess(error=b"Not a video capture device.\n")
-    _, _, logs = run_pipeline(monkeypatch, [never] * 3, attempts=3)
-    assert logs == [
-        "Could not read the camera feed. Not a video capture device."
-    ]
+def test_feed_end_includes_the_decoder_error(monkeypatch):
+    reader = FakeProcess(error=b"Invalid data found\n")
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H)
+    live._last_error = "Invalid data found"
+    logs = []
+    live._log = logs.append
+    live._reader = reader
+    live._read_loop()
+    assert logs == ["The camera feed ended. Invalid data found"]
+
+
+def test_a_quiet_pipeline_does_not_report_the_feed_ending(monkeypatch):
+    _, _, logs = run_pipeline(monkeypatch, FakeProcess(b""))
+    quiet = pipeline.Pipeline("src", "out", logs.append, width=W, height=H)
+    quiet._reader = FakeProcess(b"")
+    logs.clear()
+    quiet.quiet()
+    quiet._read_loop()
+    assert logs == []
+
+
+def test_preview_gets_every_other_turned_frame(monkeypatch):
+    offered = []
+    writer = FakeProcess()
+    monkeypatch.setattr(
+        subprocess, "Popen", fake_popen(FakeProcess(bytes(frame())), writer)
+    )
+    live = pipeline.Pipeline("src", "out", print, width=W, height=H, fps=500)
+    live.set_preview(types.SimpleNamespace(offer=offered.append))
+    live.start()
+    live._threads[0].join(timeout=5)
+    time.sleep(0.1)
+    live.stop()
+    assert offered
+    assert offered[0][0].shape == (H, W)

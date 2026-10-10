@@ -1,16 +1,16 @@
-"""Turn the camera image on its way from the source to the output device.
+"""Turn the camera image on its way from scrcpy to the output device.
 
-scrcpy writes into a hidden loopback device. One ffmpeg reads it, the frames
-are turned here, and a second ffmpeg that never closes feeds the device other
-apps use. The turn is applied per frame, so changing it never interrupts the
-output. Frames stay in planar YUV 4:2:0, which is what scrcpy delivers and
-half the size of RGB.
+scrcpy records into a FIFO. One ffmpeg decodes it, the frames are turned here,
+and a second ffmpeg that never closes feeds the device other apps use. The
+turn is applied per frame, so changing it never interrupts the output. Frames
+stay in planar YUV 4:2:0, which is half the size of RGB.
 """
 
 import subprocess
 import threading
 import time
 from collections.abc import Callable
+from typing import Protocol
 
 import numpy as np
 
@@ -24,11 +24,29 @@ ROTATIONS = (0, 90, 180, 270)
 BLACK = (16, 128, 128)
 
 FFMPEG_QUIET = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+# The preview needs far fewer frames than the output, so it gets every nth.
+PREVIEW_EVERY = 2
 
-# A loopback source only offers capture once its producer has written a frame,
-# which happens a moment after scrcpy reports the sink as started.
-CONNECT_ATTEMPTS = 40
-CONNECT_DELAY = 0.5
+
+# ──────────────────────────────────────────────────────────────| Processes |──
+def end_process(process: subprocess.Popen, grace: float = 2.0) -> None:
+    """Stop an ffmpeg promptly.
+
+    ffmpeg only notices SIGTERM when it next wakes from reading, which may be
+    never if nothing is feeding it. Closing its input ends it at once, and the
+    signal and the kill are there for whatever is left.
+    """
+    if process.stdin is not None:
+        try:
+            process.stdin.close()
+        except OSError, ValueError:
+            pass
+    process.terminate()
+    try:
+        process.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
 
 # ───────────────────────────────────────────────────────────────| Turning |──
@@ -92,14 +110,24 @@ def black_frame(width: int, height: int) -> bytes:
 
 
 # ─────────────────────────────────────────────────────────────────| Pipeline |──
+Planes = tuple[np.ndarray, np.ndarray, np.ndarray]
+
+
+class PreviewSink(Protocol):
+    """Anything that can take the turned frames for a preview."""
+
+    def offer(self, planes: Planes) -> None: ...
+
+
 class Pipeline:
-    """Reads the source, turns each frame, writes the output at a fixed rate."""
+    """Reads the recording, turns each frame, writes the output at a rate."""
 
     def __init__(
         self,
         source: str,
         output: str,
         log: Callable[[str], None],
+        on_first_frame: Callable[[], None] | None = None,
         width: int = WIDTH,
         height: int = HEIGHT,
         fps: int = FPS,
@@ -107,12 +135,15 @@ class Pipeline:
         self._source = source
         self._output = output
         self._log = log
+        self._on_first_frame = on_first_frame
         self._width = width
         self._height = height
         self._fps = fps
         self._frame_size = width * height * 3 // 2
         self._latest: bytes | bytearray = black_frame(width, height)
         self._turn = (0, False)
+        self._preview: PreviewSink | None = None
+        self._last_error = ""
         self._stopping = threading.Event()
         self._reader: subprocess.Popen[bytes] | None = None
         self._writer: subprocess.Popen[bytes] | None = None
@@ -124,19 +155,9 @@ class Pipeline:
             raise ValueError(f"rotation must be one of {ROTATIONS}")
         self._turn = (rotation, mirror)
 
-    def _open_reader(self) -> subprocess.Popen[bytes]:
-        size = f"{self._width}x{self._height}"
-        return subprocess.Popen(
-            [
-                *FFMPEG_QUIET,
-                *("-f", "v4l2", "-video_size", size, "-i", self._source),
-                *("-vf", f"scale={self._width}:{self._height}"),
-                *("-pix_fmt", "yuv420p", "-f", "rawvideo", "-"),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0,
-        )
+    def set_preview(self, sink: PreviewSink | None) -> None:
+        """Send turned frames to a preview, or stop with None."""
+        self._preview = sink
 
     def start(self) -> None:
         size = f"{self._width}x{self._height}"
@@ -151,49 +172,51 @@ class Pipeline:
             stdin=subprocess.PIPE,
             bufsize=0,
         )
-        for target in (self._read_loop, self._write_loop):
+        # Opening the FIFO waits for scrcpy to open its end, which is fine,
+        # and a stop wakes it by ending the process.
+        self._reader = subprocess.Popen(
+            [
+                "ffmpeg",
+                *("-hide_banner", "-loglevel", "fatal"),
+                *("-fflags", "nobuffer", "-flags", "low_delay"),
+                *("-i", self._source),
+                *("-vf", f"scale={self._width}:{self._height}"),
+                *("-fps_mode", "passthrough"),
+                *("-pix_fmt", "yuv420p", "-f", "rawvideo", "-"),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+        )
+        for target in (self._read_loop, self._write_loop, self._drain_errors):
             thread = threading.Thread(target=target, daemon=True)
             thread.start()
             self._threads.append(thread)
+
+    def quiet(self) -> None:
+        """Expect the feed to end, so its ending is not reported as a fault."""
+        self._stopping.set()
 
     def stop(self) -> None:
         self._stopping.set()
         for process in (self._reader, self._writer):
             if process is not None:
-                process.terminate()
-        for process in (self._reader, self._writer):
-            if process is not None:
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                end_process(process)
         for thread in self._threads:
             thread.join(timeout=5)
 
     # ───────────────────────────────────────────────────────────────| Loops |──
-    def _read_loop(self) -> None:
-        """Keep a reader connected, retrying until the source is ready."""
-        for attempt in range(CONNECT_ATTEMPTS):
-            if self._stopping.is_set():
-                return
-            try:
-                self._reader = self._open_reader()
-            except OSError as exc:
-                self._log(f"Could not start ffmpeg: {exc}")
-                return
-            if self._read_frames(self._reader):
-                return
-            reason = self._reader.stderr.read().decode(errors="replace")
-            self._reader.wait()
-            if self._stopping.wait(CONNECT_DELAY):
-                return
-        last = reason.strip().splitlines()[-1] if reason.strip() else ""
-        self._log(f"Could not read the camera feed. {last}".strip())
+    def _drain_errors(self) -> None:
+        """Keep the reader's stderr empty, so it never blocks on a full pipe."""
+        stream = self._reader.stderr  # type: ignore[union-attr]
+        for raw in iter(stream.readline, b""):
+            text = raw.decode(errors="replace").strip()
+            if text:
+                self._last_error = text
 
-    def _read_frames(self, reader: subprocess.Popen[bytes]) -> bool:
-        """Store frames until the feed ends, False if none ever arrived."""
-        stream = reader.stdout
-        received = False
+    def _read_loop(self) -> None:
+        stream = self._reader.stdout  # type: ignore[union-attr]
+        first = True
         while not self._stopping.is_set():
             frame = bytearray(self._frame_size)
             view = memoryview(frame)
@@ -201,26 +224,36 @@ class Pipeline:
             while got < self._frame_size:
                 count = stream.readinto(view[got:])
                 if not count:
-                    if received and not self._stopping.is_set():
-                        self._log("The camera feed ended.")
-                    return received
+                    if not self._stopping.is_set():
+                        self._log(
+                            f"The camera feed ended. {self._last_error}".strip()
+                        )
+                    return
                 got += count
-            received = True
             self._latest = frame
-        return True
+            if first:
+                first = False
+                if self._on_first_frame is not None:
+                    self._on_first_frame()
 
     def _write_loop(self) -> None:
         stream = self._writer.stdin  # type: ignore[union-attr]
         interval = 1 / self._fps
         deadline = time.monotonic()
+        count = 0
         while not self._stopping.is_set():
+            planes = self._turned(self._latest)
             try:
-                for plane in self._turned(self._latest):
+                for plane in planes:
                     stream.write(memoryview(np.ascontiguousarray(plane)))
             except BrokenPipeError, ValueError:
                 if not self._stopping.is_set():
                     self._log("The webcam output closed unexpectedly.")
                 return
+            preview = self._preview
+            if preview is not None and count % PREVIEW_EVERY == 0:
+                preview.offer(planes)
+            count += 1
             deadline += interval
             delay = deadline - time.monotonic()
             if delay > 0:
@@ -228,9 +261,7 @@ class Pipeline:
             else:
                 deadline = time.monotonic()
 
-    def _turned(
-        self, frame: bytes | bytearray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _turned(self, frame: bytes | bytearray) -> Planes:
         rotation, mirror = self._turn
         luma, cb, cr = split_planes(frame, self._width, self._height)
         if rotation == 0 and not mirror:
